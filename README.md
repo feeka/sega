@@ -2,7 +2,7 @@
 
 Space-efficient graph traversal on succinct de Bruijn graphs.
 
-Standard BFS and DFS use Θ(n log n) bits of auxiliary state — a 32-bit distance array for BFS, a node-identifier stack for DFS. On a succinct de Bruijn graph (dBG), at ~4 bits/edge, this state exceeds the graph. `sega` implements O(n)-bit BFS and DFS (Elmasry–Hagerup–Kammer) on a succinct dBG and measures space and time on real graphs.
+Standard BFS and DFS use Θ(n log n) bits of auxiliary state — a 32-bit distance array for BFS, a node-identifier stack for DFS. On a succinct de Bruijn graph (dBG), at ~4 bits/edge, this state exceeds the graph. `sega` implements a space-efficient DFS (Elmasry–Hagerup–Kammer-style stack reconstruction; 4 bits/node) and a linear-time, low-memory BFS (a 1-bit visited bitmap plus an explicit frontier) on a succinct dBG, and measures their space and time on real graphs.
 
 ## Overview
 
