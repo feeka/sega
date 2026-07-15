@@ -1,82 +1,86 @@
 # sega
 
-*Space-efficient graph algorithms on succinct de Bruijn graphs.*
+Space-efficient graph traversal on succinct de Bruijn graphs.
 
-Breadth-first search (BFS) and depth-first search (DFS), in their textbook form, allocate auxiliary bookkeeping that costs Θ(n log n) bits: a 32-bit distance array for BFS and an explicit node-identifier stack for DFS. On a *succinct* de Bruijn graph (dBG) — which stores each edge in roughly four bits — this auxiliary state can exceed the size of the graph itself. **sega** ports the space-efficient graph-algorithms line (Elmasry–Hagerup–Kammer and related work) onto a succinct dBG, reducing the auxiliary state to a few bits per node, and measures the resulting space and time on real graphs. On the graphs tested, the traversals reproduce their textbook counterparts exactly; the reduction in auxiliary memory is substantial, and it carries a time cost that is modest for DFS but, in the current implementation, large for BFS on high-diameter inputs (see [Limitations](#limitations)).
+Textbook BFS and DFS use Θ(n log n) bits of auxiliary state — a 32-bit distance array for BFS, a node-identifier stack for DFS. On a succinct de Bruijn graph (dBG), at ~4 bits/edge, this state exceeds the graph. `sega` implements O(n)-bit BFS and DFS (Elmasry–Hagerup–Kammer) on a succinct dBG and measures space and time on real graphs.
 
-## Background
+## Overview
 
-A de Bruijn graph over the DNA alphabet (σ = 4) has in- and out-degree at most four. Its succinct representations — for example BOSS (Bowe et al., 2012) — answer navigation queries through rank/select at about four bits per edge. Textbook BFS and DFS were not designed for this regime: once the graph is compressed, their auxiliary arrays and stacks dominate memory. The space-efficient graph-algorithms literature shows that BFS and DFS can instead run in O(n) bits by replacing those structures with a colored *choice dictionary* and reconstructing search state from the graph's own navigation primitives. To our knowledge, that construction had not been instantiated on a succinct dBG. sega does so, treating BFS and DFS as one substrate — a navigation interface, a choice dictionary, and a reconstruction policy — and measures the space–time trade-off directly.
+- Node = k-mer; in-/out-degree ≤ 4.
+- Traversal engine is backend-agnostic through the `NavOracle` interface.
+- Auxiliary state: 2 bits/node (BFS), 4 bits/node (DFS) — vs 32 bits/node (BFS baseline) and 8+ bits/node plus a node stack (DFS baseline).
+- DFS stores no node stack: parents are reconstructed on backtracking from incoming edges plus a 2-bit "which parent" trail (EHK).
 
-## Design
+## Components
 
-The traversal engine is written against a small navigation interface (`NavOracle`) and is therefore independent of the graph backend.
+| File | Contents |
+|---|---|
+| `include/sdbg_traverse/nav_oracle.hpp` | navigation interface; dependency-free in-memory backend |
+| `include/sdbg_traverse/choice_dictionary.hpp` | 2-bit colored choice dictionary; 2-bit parent trail |
+| `include/sdbg_traverse/bfs.hpp` | `se_bfs` + textbook baseline |
+| `include/sdbg_traverse/dfs.hpp` | `se_dfs` (EHK reconstruction) + textbook baseline |
+| `backends/megahit_oracle.hpp` | MEGAHIT SDBG backend (primary; submodule `libs/megahit`) |
+| `backends/cosmo_oracle.hpp` | cosmo/VARI BOSS backend (compiles; construction not wired) |
+| `bench/sdbg_report.cpp` | check + benchmark + HTML report |
 
-- `include/sdbg_traverse/nav_oracle.hpp` — the interface (node count, validity, and up to four out-/in-neighbours), plus a dependency-free in-memory backend used for testing.
-- `include/sdbg_traverse/choice_dictionary.hpp` — a colored choice dictionary at two bits per node. It serves as both the DFS visited-set and the BFS frontier, replacing the distance array and the node stack.
-- `include/sdbg_traverse/bfs.hpp` — space-efficient BFS (`se_bfs`) with streamed distances, and a textbook baseline.
-- `include/sdbg_traverse/dfs.hpp` — space-efficient DFS (`se_dfs`) using Elmasry–Hagerup–Kammer (EHK) stack reconstruction: the parent of each node is recovered on backtracking from the graph's incoming edges plus a two-bit "which parent" trail, so no node-identifier stack is stored.
-- `backends/megahit_oracle.hpp` — the primary backend, over MEGAHIT's succinct dBG (the representation the MCAAT assembler is built on), vendored as a git submodule at `libs/megahit`.
-- `backends/cosmo_oracle.hpp` — a second backend over cosmo/VARI BOSS; it compiles, but its graph-construction pipeline is not yet wired.
+## Build
 
-## Reproducing the results
-
-The dependency-free test suite compiles with any C++17 compiler:
-
-```bash
+Tests (no dependencies):
+```
 g++ -std=c++17 -O2 -Iinclude tests/test_traversal.cpp -o test_traversal && ./test_traversal
 ```
 
-The MEGAHIT backend and the benchmark/report tool build through CMake, which uses the vendored submodule:
-
-```bash
+MEGAHIT backend + report tool:
+```
 git clone --recursive https://github.com/feeka/sega.git
 cd sega
 cmake -B build && cmake --build build -j
-./build/sdbg_report <graph_prefix> report.html   # traverse, check, benchmark; write an HTML report
+./build/sdbg_report <graph_prefix> report.html
 ```
-
-`<graph_prefix>` is any MEGAHIT/MCAAT-built graph (the `<dir>/graph` prefix). `sdbg_report` runs the correctness checks and the memory/time benchmark and writes a self-contained HTML report; `example_report_10M.html` is one such output.
+`<graph_prefix>` = MEGAHIT/MCAAT graph prefix (`<dir>/graph`). CMake enables the MEGAHIT backend when the submodule is present.
 
 ## Results
 
-We evaluated sega on two succinct dBGs built by prior runs of MCAAT (k = 23): one with 0.4 million nodes and one with 10.6 million nodes.
+Graphs: two MCAAT-built succinct dBGs, k = 23, N = 404,576 and 10,585,591.
 
-**Correctness.** On both graphs, `se_bfs` reproduced the textbook BFS distances exactly, and `se_dfs` reproduced the textbook discovery order, finish order, and parent assignment exactly. BFS was additionally cross-checked against an independent in-memory reference.
+Correctness: `se_bfs` distances and `se_dfs` discovery/finish/parent maps match the textbook baselines exactly on both graphs; BFS additionally matches an independent in-memory reference.
 
-**Memory.** Auxiliary memory is two bits per node for BFS and four bits per node for DFS, against 32 bits per node (the distance array) and eight-plus bits per node (the state array and node stack) for the baselines. On the 10.6-million-node graph, peak resident memory — read from `/proc`, one method per process — was:
+Peak resident memory (N = 10,585,591; VmHWM from `/proc`, one method per process):
 
 | Traversal | space-efficient | textbook |
 |---|---:|---:|
 | BFS | 40.3 MB | 78.6 MB |
 | DFS | 42.9 MB | 48.0 MB |
 
-The 32-bit distance array accounts for roughly 40 MB of resident memory and approximately doubles the BFS process; the two-bit choice dictionary reduces that auxiliary term by a factor of sixteen. The measured cost of the DFS no-stack reconstruction was about two incoming-edge probes per node finished.
-
-These figures are measured rather than asymptotic. They derive from two graphs, one value of k, one machine, and a single traversal source, and should be read as such rather than as a general characterization.
+- BFS auxiliary: 2.52 MB (2 bits/node) vs 40.4 MB (32-bit distance array) — factor 16.
+- DFS reconstruction cost: ~2.0 incoming-edge probes per finish.
+- Scope: 2 graphs, 1 value of k, 1 machine, single traversal source.
 
 ## Limitations
 
-- **BFS runtime.** The current choice dictionary rescans its bit-array once per BFS level, so `se_bfs` runs in O(N · depth). On a high-diameter, chain-like graph (a CRISPR array) this was pathological: 58 s, against 15 ms for the textbook baseline. A constant-time frontier structure (a Kammer–Sajenko choice dictionary) is the planned remedy; DFS is unaffected, since it uses only constant-time reads and writes.
-- **Scope of evidence.** Two graphs, one k, one machine, single-source traversal. A multi-source, multi-k, multi-machine sweep and a branch-only-stack DFS baseline are needed before any general claim.
+- `se_bfs` rescans the choice-dictionary bit-array once per BFS level → O(N·depth). On a high-diameter graph (CRISPR array): 58 s vs 15 ms textbook. Fix: constant-time frontier (Kammer–Sajenko choice dictionary). DFS unaffected.
+- No multi-source, multi-k, or multi-machine sweep; no branch-only-stack DFS baseline.
 
 ## Roadmap
 
-In order: the constant-time frontier structure; a multi-source and multi-k benchmark sweep; a branch-only-stack DFS baseline; and extension of the same substrate to strongly connected components, which reuses the DFS and obtains the graph transpose for free from the incoming-edge navigation.
+1. Constant-time frontier structure (fixes `se_bfs` runtime).
+2. Multi-source / multi-k benchmark sweep.
+3. Branch-only-stack DFS baseline.
+4. Strongly connected components (reuses DFS; transpose obtained from incoming-edge navigation).
 
-## Selected related work
+## References
 
 - Bowe, Onodera, Sadakane, Shibuya. Succinct de Bruijn graphs. WABI 2012.
 - Elmasry, Hagerup, Kammer. Space-efficient basic graph algorithms. STACS 2015.
 - Kammer, Sajenko. Simple 2^f-color choice dictionaries. ISAAC 2018.
-- Li, Liu, Luo, Sadakane, Lam. MEGAHIT: an ultra-fast single-node solution for large and complex metagenomics assembly via succinct de Bruijn graph. Bioinformatics, 2015.
+- Li, Liu, Luo, Sadakane, Lam. MEGAHIT. Bioinformatics, 2015.
 
-Bibliographic details above should be verified against the primary sources before formal citation.
+Verify bibliographic details before formal citation.
 
-## Disclosure of AI assistance
+## AI use
 
-The implementation and this document were developed with substantial assistance from a large language model (Anthropic Claude, Opus 4.8). Every correctness and performance claim is backed by the included test and benchmark tooling, whose exact output is reproducible with the commands above; the author reviewed the code and results and takes full responsibility for them. This disclosure follows current journal and funder guidance on reporting the use of LLMs in scholarly work.
+Implementation and documentation developed with LLM assistance (Anthropic Claude, Opus 4.8). All correctness and performance claims are reproducible via the tooling above.
 
-## Status and license
+## Status
 
-Prototype. Correctness and memory results are verified as described above; the roadmap items remain open. License: to be determined.
+Prototype. Correctness and memory results verified as above; roadmap items open. License: TBD.
