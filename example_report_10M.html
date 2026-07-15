@@ -1,0 +1,45 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>sdbg-traverse report — graph</title><style>
+:root{--bg:#F3F4F1;--panel:#FFFFFF;--ink:#171A20;--muted:#5C6472;--line:#DCDFD8;--accent:#9A6510;--accent-soft:#B5771F;--pass:#1E7A46;--warn:#B4531B;--term-bg:#12151B;--term-ink:#D7DCE4;--term-dim:#79828F;--term-green:#5BC98A;--term-amber:#E3A94A;--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Consolas,monospace;--maxw:960px}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1116;--panel:#161A22;--ink:#E7EAF0;--muted:#8C95A4;--line:#262C36;--accent:#E3A94A;--accent-soft:#E3A94A;--pass:#4CC585;--warn:#E0894A}}
+:root[data-theme="dark"]{--bg:#0E1116;--panel:#161A22;--ink:#E7EAF0;--muted:#8C95A4;--line:#262C36;--accent:#E3A94A;--accent-soft:#E3A94A;--pass:#4CC585;--warn:#E0894A}
+:root[data-theme="light"]{--bg:#F3F4F1;--panel:#FFFFFF;--ink:#171A20;--muted:#5C6472;--line:#DCDFD8;--accent:#9A6510;--accent-soft:#B5771F;--pass:#1E7A46;--warn:#B4531B}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;margin:0;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:clamp(1.2rem,4vw,3rem) clamp(1rem,4vw,2rem)}
+h1,h2{text-wrap:balance;line-height:1.15;font-weight:680;letter-spacing:-.01em;margin:0}
+h1{font-size:clamp(1.6rem,4vw,2.3rem)}h2{font-size:clamp(1.15rem,2.5vw,1.45rem);margin-bottom:.3rem}
+p{margin:.6rem 0}.prose{max-width:66ch}.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent-soft);display:flex;gap:.6rem;align-items:center;border-top:1px solid var(--line);padding-top:.4rem;margin-bottom:.9rem}
+.eyebrow::before{content:"";width:26px;height:2px;background:var(--accent-soft)}
+.sub{color:var(--muted);margin-top:.6rem}section{margin-top:clamp(2rem,5vw,3.2rem)}
+.stats{display:flex;flex-wrap:wrap;gap:.9rem;margin-top:1.4rem}
+.stat{flex:1 1 150px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.85rem .95rem}
+.stat .k{font-family:var(--mono);font-size:1.45rem;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.stat .k b{color:var(--accent);font-weight:680}.stat .l{font-size:.78rem;color:var(--muted);margin-top:.15rem}
+.chip{display:inline-flex;align-items:center;gap:.4rem;font-family:var(--mono);font-size:.74rem;padding:.18rem .55rem;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:var(--panel)}
+.chip.pass{color:var(--pass);border-color:color-mix(in srgb,var(--pass) 40%,var(--line))}.chip.pass::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--pass)}
+.chip.fail{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-top:1rem}
+table{border-collapse:collapse;width:100%;font-size:.86rem;min-width:520px}
+th,td{text-align:right;padding:.55rem .8rem;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+thead th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+tbody tr:last-child td{border-bottom:none}.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.ours{color:var(--pass);font-weight:600}.them{color:var(--muted)}
+.term{background:var(--term-bg);color:var(--term-ink);border-radius:10px;padding:1rem 1.1rem;font-family:var(--mono);font-size:.8rem;line-height:1.65;overflow-x:auto;border:1px solid #232a35;white-space:pre-wrap;margin-top:1rem}
+.term .ok{color:var(--term-green)}.term .am{color:var(--term-amber)}.term .p{color:var(--term-dim)}
+.bars{display:flex;flex-direction:column;gap:.9rem;margin-top:1.2rem}
+.barrow{display:grid;grid-template-columns:150px 1fr;gap:.8rem;align-items:center}
+.barrow .lab{font-family:var(--mono);font-size:.76rem;color:var(--muted)}
+.track{position:relative;background:color-mix(in srgb,var(--line) 55%,transparent);border-radius:6px;height:26px}
+.bar{height:100%;border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:.5rem;font-family:var(--mono);font-size:.74rem;font-variant-numeric:tabular-nums;color:#fff;min-width:46px}
+.bar.se{background:var(--pass)}.bar.base{background:color-mix(in srgb,var(--warn) 78%,#000 4%)}
+.floor{position:absolute;top:-4px;bottom:-4px;border-left:2px dashed var(--muted);opacity:.7}
+.callout{border-left:3px solid var(--warn);background:color-mix(in srgb,var(--warn) 9%,var(--panel));padding:.8rem 1rem;border-radius:0 8px 8px 0;margin-top:1.2rem}
+.callout .t{font-family:var(--mono);font-size:.74rem;text-transform:uppercase;letter-spacing:.08em;color:var(--warn)}
+footer{margin-top:3rem;border-top:1px solid var(--line);padding-top:1rem;color:var(--muted);font-size:.78rem;font-family:var(--mono)}
+</style></head><body><div class="wrap"><div class="eyebrow">sdbg-traverse report</div><h1>Space-efficient traversal on a real succinct de Bruijn graph</h1><p class="sub">Graph <span class="num">graph</span> &middot; <span class="num">10585591</span> nodes &middot; k=23 &middot; reachable from source: <span class="num">9006744</span></p><div class="stats"><div class="stat"><div class="k"><b>10585591</b></div><div class="l">nodes (edges) in graph</div></div><div class="stat"><div class="k"><b>40.4 MB</b></div><div class="l">peak RAM, our BFS vs 78.8 MB textbook</div></div><div class="stat"><div class="k"><b>16×</b></div><div class="l">smaller BFS bookkeeping</div></div><div class="stat"><div class="k" style="color:var(--pass)">PASS</div><div class="l">exact match to textbook</div></div></div><section><div class="eyebrow">Correctness</div><h2>Exact match to textbook traversals</h2><p class="prose" style="color:var(--muted)">Space-efficient and textbook traversals run on the same graph; BFS distances and DFS discovery/finish/parent maps must be identical.</p><div class="term"><span class="p">$</span> sdbg_report graph
+SDBG loaded: <span class="am">N=10585591</span> edges, k=23
+[BFS] se vs baseline distances match: <span class="ok">YES</span>
+[BFS] InMemory cross-check skipped (N too large)
+[DFS] discovery:<span class="ok">OK</span> finish:<span class="ok">OK</span> parents:<span class="ok">OK</span>
+[DFS] reconstruction tax = <span class="am">2.05116</span> in-neighbour probes / finish
+RESULT: <span class="ok">ALL CHECKS PASSED</span> (on a real MEGAHIT SDBG)</div></section><section><div class="eyebrow">Measurement</div><h2>Auxiliary memory &amp; runtime</h2><p class="prose" style="color:var(--muted)">Peak RAM is each method's process high-water mark (VmHWM, /proc), measured in its own process. Graph floor &asymp; 37.6 MB.</p><div class="scroll"><table><thead><tr><th>Method</th><th>Aux memory</th><th>Peak RAM</th><th>Wall time</th></tr></thead><tbody><tr><td><span class="ours">BFS — space-efficient</span></td><td class="mono ours">2.52 MB</td><td class="mono ours">40.4 MB</td><td class="mono">14990 ms</td></tr><tr><td><span class="them">BFS — textbook</span></td><td class="mono them">40.38 MB</td><td class="mono them">78.8 MB</td><td class="mono">2004 ms</td></tr><tr><td><span class="ours">DFS — space-efficient</span></td><td class="mono ours">5.05 MB</td><td class="mono ours">42.9 MB</td><td class="mono">4167 ms</td></tr><tr><td><span class="them">DFS — textbook</span></td><td class="mono them">10.10 MB</td><td class="mono them">48.0 MB</td><td class="mono">2414 ms</td></tr></tbody></table></div><div class="bars"><div class="barrow"><div class="lab">BFS &middot; ours</div><div class="track"><div class="floor" style="left:47.7437%"></div><div class="bar se" style="width:51.3%">40.4 MB</div></div></div><div class="barrow"><div class="lab">BFS &middot; textbook</div><div class="track"><div class="floor" style="left:47.7437%"></div><div class="bar base" style="width:100.0%">78.8 MB</div></div></div><div class="barrow"><div class="lab">DFS &middot; ours</div><div class="track"><div class="floor" style="left:47.7437%"></div><div class="bar se" style="width:54.5%">42.9 MB</div></div></div><div class="barrow"><div class="lab">DFS &middot; textbook</div><div class="track"><div class="floor" style="left:47.7437%"></div><div class="bar base" style="width:61.0%">48.0 MB</div></div></div></div></section><footer>sdbg-traverse &middot; MEGAHIT SDBG backend &middot; peak RAM = VmHWM per isolated process &middot; single-source. All figures are captured program output.</footer></div></body></html>

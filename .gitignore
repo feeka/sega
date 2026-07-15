@@ -1,0 +1,23 @@
+# build output
+/build/
+*.exe
+*.o
+*.obj
+test_traversal
+test_traversal.exe
+PLAN.md
+succinct-traversal-results.html
+
+# graph data / scratch
+*.dbg
+*.packed
+*.kmc_*
+/data/
+/scratch/
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+rules.md
