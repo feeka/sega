@@ -26,8 +26,7 @@ static void check(bool ok, const std::string& what) {
 // ---- BFS: compare se vs baseline distance maps from a given source ----
 static void check_bfs(const InMemoryOracle& g, node_t src, const std::string& tag) {
     std::map<node_t, uint64_t> a, b;
-    ChoiceDictionary cd(g.N());
-    se_bfs(g, src, cd, [&](node_t v, uint64_t d) { a[v] = d; });
+    se_bfs(g, src, [&](node_t v, uint64_t d) { a[v] = d; });
     baseline_bfs(g, src, [&](node_t v, uint64_t d) { b[v] = d; });
     check(a == b, tag + ": se_bfs == baseline_bfs (src=" + std::to_string(src) + ")");
 }
@@ -97,10 +96,9 @@ int main() {
             check_dfs(g, src, "random");
         }
         // concrete space story on this graph:
-        ChoiceDictionary cd(N);
-        double se_bits   = cd.resident_bytes() * 8.0 / N;           // ~2 bits/node
-        double base_bits = (sizeof(uint32_t) * 8.0);               // 32-bit dist array
-        std::printf("  [space] N=%zu  se_bfs choice-dict = %.2f bits/node  vs  baseline dist array = %.0f bits/node  (%.1fx)\n",
+        double se_bits   = 1.0;                                    // 1-bit visited bitmap
+        double base_bits = sizeof(uint32_t) * 8.0;                 // 32-bit dist array
+        std::printf("  [space] N=%zu  se_bfs visited = %.0f bit/node  vs  baseline dist array = %.0f bits/node  (%.0fx)\n",
                     N, se_bits, base_bits, base_bits / se_bits);
     }
 

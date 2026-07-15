@@ -63,9 +63,8 @@ int main(int argc, char** argv) {
     auto t0 = clk::now();
 
     if (mode == "bfs-se") {
-        ChoiceDictionary cd(N);
-        aux_fixed = (long)cd.resident_bytes();
-        auto s = se_bfs(oracle, src, cd, [](node_t, uint64_t) {});
+        aux_fixed = (long)((N + 63) / 64 * 8);   // 1-bit visited bitmap
+        auto s = se_bfs(oracle, src, [](node_t, uint64_t) {});
         aux_alive_rss = status_kb("VmRSS:");         // choice dict still alive
         visited = s.visited;
     } else if (mode == "bfs-base") {

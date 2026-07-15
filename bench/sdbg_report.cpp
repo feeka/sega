@@ -60,8 +60,8 @@ static int bench_one(const char* prefix, const std::string& mode) {
     long aux_fixed = 0, aux_alive = -1; unsigned long long visited = 0;
     auto t0 = clk::now();
     if (mode == "bfs-se") {
-        ChoiceDictionary cd(N); aux_fixed = (long)cd.resident_bytes();
-        visited = se_bfs(o, src, cd, [](node_t,uint64_t){}).visited;
+        aux_fixed = (long)((N + 63) / 64 * 8);   // 1-bit visited bitmap
+        visited = se_bfs(o, src, [](node_t,uint64_t){}).visited;
         aux_alive = status_kb("VmRSS:");
     } else if (mode == "bfs-base") {
         aux_fixed = (long)(N * sizeof(uint32_t));
@@ -171,8 +171,7 @@ int main(int argc, char** argv) {
 
     std::map<node_t,uint64_t> bfs_se, bfs_base; bool bfs_ok=false, bfs_x=false, bfs_x_run=false;
     {
-        ChoiceDictionary cd(N);
-        se_bfs(o, src, cd, [&](node_t v,uint64_t d){ bfs_se[v]=d; });
+        se_bfs(o, src, [&](node_t v,uint64_t d){ bfs_se[v]=d; });
         baseline_bfs(o, src, [&](node_t v,uint64_t d){ bfs_base[v]=d; });
         bfs_ok = (bfs_se == bfs_base);
         if (N <= 5000000) {

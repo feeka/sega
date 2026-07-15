@@ -1,16 +1,15 @@
-// bfs.hpp — space-efficient BFS (plan idea #3).
+// bfs.hpp — space-efficient BFS.
 //
-// Replaces the textbook std::queue + Theta(n log n)-bit distance array with a
-// 2-bit/cell colored choice dictionary. Distances are STREAMED (emitted in
-// wavefront order) rather than stored for random access — hence "distance
-// stream", not "distance oracle". Working memory beyond the graph is one
-// ChoiceDictionary (~2 bits/node).
+// se_bfs: a 1-bit visited bitmap + explicit frontier lists + STREAMED distances.
+// Linear O(N+M) time. It avoids the textbook 32-bit distance array (a 1-bit
+// visited marker + streamed distances instead); the frontier lists hold O(max
+// level width) node ids, which stays small on near-linear (genomic) graphs.
 //
-// Colors: 0=WHITE (unvisited), 1=CUR (current wavefront), 2=NEXT (next
-// wavefront), 3=DONE (settled). Each round:
-//   iterate(CUR): emit (v, dist); push WHITE out-neighbours to NEXT; settle v.
-//   iterate(NEXT): promote to CUR.
-// Terminates when NEXT is empty.
+// An earlier version reconstructed each frontier by scanning a 2-bit choice
+// dictionary -> O(N*depth), pathological on high-diameter graphs (58 s on a
+// CRISPR chain). This explicit-frontier version is linear. The strict O(n)-bit
+// variant would swap the frontier lists for a Kammer-Sajenko choice dictionary
+// (O(1) iterate) — not needed for the narrow-frontier genomic case.
 
 #pragma once
 #include "sdbg_traverse/nav_oracle.hpp"
@@ -20,39 +19,40 @@
 #include <vector>
 
 namespace sdbgt {
-namespace color { enum : uint8_t { WHITE = 0, CUR = 1, NEXT = 2, DONE = 3 }; }
-
-struct BfsStats { uint64_t visited = 0, edges_scanned = 0, rounds = 0; };
+struct BfsStats { uint64_t visited = 0, edges_scanned = 0, rounds = 0, max_frontier = 0; };
 
 // Single-source space-efficient BFS. emit(node_t v, uint64_t dist) is called
 // exactly once per reachable node, in nondecreasing distance order.
+// Aux: a 1-bit visited bitmap (N/8 bytes) + two frontier vectors (O(level width)).
 template <class Oracle, class Emit>
-BfsStats se_bfs(const Oracle& g, node_t src, ChoiceDictionary& cd, Emit&& emit) {
+BfsStats se_bfs(const Oracle& g, node_t src, Emit&& emit) {
     BfsStats st;
-    cd.set(src, color::CUR);
-    uint64_t dist = 0;
-    node_t nb[kSigma];
+    const size_t N = g.N();
+    std::vector<uint64_t> vis((N + 63) / 64, 0);          // 1 bit/node visited
+    auto seen = [&](node_t v) { return (vis[v >> 6] >> (v & 63)) & 1ULL; };
+    auto mark = [&](node_t v) { vis[v >> 6] |= 1ULL << (v & 63); };
 
-    for (;;) {
-        // ---- process current wavefront ----
-        cd.iterate(color::CUR, [&](size_t v) {
-            emit(node_t(v), dist);
+    std::vector<node_t> cur, nxt;
+    mark(src);
+    cur.push_back(src);
+    uint64_t level = 0;
+    node_t nb[kSigma];
+    while (!cur.empty()) {
+        if (cur.size() > st.max_frontier) st.max_frontier = cur.size();
+        for (node_t v : cur) {
+            emit(v, level);
             ++st.visited;
-            int d = g.outgoing(node_t(v), nb);
+            int d = g.outgoing(v, nb);
             st.edges_scanned += d;
             for (int i = 0; i < d; ++i) {
                 node_t w = nb[i];
-                if (g.valid(w) && cd.get(w) == color::WHITE) cd.set(w, color::NEXT);
+                if (g.valid(w) && !seen(w)) { mark(w); nxt.push_back(w); }
             }
-            cd.set(v, color::DONE);
-        });
+        }
+        cur.swap(nxt);
+        nxt.clear();
+        ++level;
         ++st.rounds;
-
-        // ---- promote NEXT -> CUR; stop if empty ----
-        bool any = false;
-        cd.iterate(color::NEXT, [&](size_t v) { cd.set(v, color::CUR); any = true; });
-        if (!any) break;
-        ++dist;
     }
     return st;
 }

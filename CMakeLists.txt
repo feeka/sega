@@ -15,21 +15,6 @@ enable_testing()
 add_executable(test_traversal tests/test_traversal.cpp)
 add_test(NAME traversal COMMAND test_traversal)
 
-# ── Production backend + benchmark over cosmo/VARI BOSS. Opt-in. ──────────────
-# Needs cosmo + sdsl on the include/link path (POSIX). Point COSMO_INCLUDE_DIR
-# and SDSL_* at your install, then: cmake -DSDBGT_WITH_COSMO=ON ...
-option(SDBGT_WITH_COSMO "Build the cosmo/VARI BOSS backend and benchmark" OFF)
-if(SDBGT_WITH_COSMO)
-    # Verified: g++15 + xxsds/sdsl-lite (header-only) + cosmo headers, -std=c++17.
-    set(COSMO_INCLUDE_DIR "" CACHE PATH "Path to cosmo headers (debruijn_graph.hpp)")
-    set(SDSL_INCLUDE_DIR  "" CACHE PATH "Path to xxsds sdsl-lite include dir (e.g. ~/sdsl-lite/include)")
-    add_executable(bench bench/bench_main.cpp)
-    # NDEBUG is REQUIRED: strips a broken assert at cosmo debruijn_graph.hpp:143.
-    target_compile_definitions(bench PRIVATE SDBGT_WITH_COSMO NDEBUG)
-    target_include_directories(bench PRIVATE ${COSMO_INCLUDE_DIR} ${SDSL_INCLUDE_DIR} backends)
-    # sdsl fork is header-only; no library link required for load+navigate.
-endif()
-
 # ── MEGAHIT SDBG backend (PRIMARY). Auto-enabled when the submodule is present. ─
 # Vendored at libs/megahit (git submodule). Loading + navigating an SDBG needs
 # only two .cpp; kmlib / parallel_hashmap / pprintpp are header-only.

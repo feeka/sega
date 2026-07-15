@@ -49,8 +49,7 @@ int main(int argc, char** argv) {
     std::map<node_t, uint64_t> bfs_se;
     {
         std::map<node_t, uint64_t> bfs_base;
-        ChoiceDictionary cd(N);
-        auto s = se_bfs(oracle, src, cd, [&](node_t v, uint64_t d) { bfs_se[v] = d; });
+        auto s = se_bfs(oracle, src, [&](node_t v, uint64_t d) { bfs_se[v] = d; });
         auto b = baseline_bfs(oracle, src, [&](node_t v, uint64_t d) { bfs_base[v] = d; });
         bool ok = (bfs_se == bfs_base);
         std::printf("[BFS] se visited=%llu  baseline visited=%llu  distances match: %s\n",
