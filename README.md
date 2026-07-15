@@ -40,20 +40,30 @@ cmake -B build && cmake --build build -j
 
 ## Results
 
-Graphs: two MCAAT-built succinct dBGs, k = 23, N = 404,576 and 10,585,591.
+Graphs: three succinct dBGs, k = 23, N = 404,576, 10,585,591 (MCAAT), and 807,721,414 (a real MEGAHIT metagenome SDBG).
 
-Correctness: `se_bfs` distances and `se_dfs` discovery/finish/parent maps match the standard baselines exactly on both graphs; BFS additionally matches an independent in-memory reference.
+Correctness: on the two smaller graphs, `se_bfs` distances and `se_dfs` discovery/finish/parent maps match the standard baselines exactly (BFS also matches an independent in-memory reference). At N = 807,721,414, recording per-node results is infeasible (tens of GB), so correctness there is reachable-count parity — for both BFS and DFS the space-efficient and standard traversals reach the identical 587,091,258 nodes.
 
-Peak resident memory (N = 10,585,591; VmHWM from `/proc`, one method per process):
+Peak resident memory (VmHWM from `/proc`, one method per process; 1 MiB = 1024 KiB).
+
+N = 10,585,591:
 
 | Traversal | space-efficient | standard |
 |---|---:|---:|
 | BFS | 41.5 MB | 78.6 MB |
 | DFS | 42.9 MB | 48.0 MB |
 
-- BFS auxiliary: 1.32 MB (1-bit visited bitmap) + a small frontier list, vs 40.4 MB (32-bit distance array). `se_bfs` runs in linear O(N+M) time and matches standard-BFS runtime (1.51 s vs 1.54 s here).
-- DFS reconstruction cost: ~2.0 incoming-edge probes per finish.
-- Scope: 2 graphs, 1 value of k, 1 machine, single traversal source.
+N = 807,721,414 (1.78 GiB graph floor shared by both methods; one source reaches 587,091,258 nodes = 72.7% of N, forward reachability from a single seed):
+
+| Traversal | space-efficient | standard | peak reduction |
+|---|---:|---:|---:|
+| BFS | 2.07 GiB | 4.87 GiB | 57.5% (2.36×) |
+| DFS | 2.16 GiB | 3.55 GiB | 39.2% (1.64×) |
+
+- Wall time, one run each: BFS 12.6 min (se) vs 13.8 min (standard) — se ~9% faster; DFS 32.4 min (se) vs 19.0 min (standard) — se ~1.7× slower. BFS wins on both axes; DFS trades time for space (the EHK stack reconstruction costs ~2 incoming-edge probes per finish, expensive on a cache-cold multi-GB graph).
+- BFS fixed auxiliary is a 1-bit/node visited bitmap (96 MiB, ~1/32 of the 3.01 GiB 32-bit distance array it replaces); the explicit frontier lists add ~193 MiB on this graph, so the working set above the graph floor is ~289 MiB. The 57.5% peak-RSS reduction is smaller than the ~32× auxiliary-only ratio because the 1.78 GiB graph is shared by both methods.
+- On N = 10,585,591 the BFS auxiliary is 1.32 MB (bitmap) + a small frontier vs 40.4 MB (distance array); `se_bfs` matches standard-BFS runtime (1.51 s vs 1.54 s).
+- Scope: 3 graphs, 1 value of k, 1 machine, single traversal source, one run per method.
 
 ## Limitations
 

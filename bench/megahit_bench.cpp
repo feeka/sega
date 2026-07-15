@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
     if (mode == "bfs-se") {
         aux_fixed = (long)((N + 63) / 64 * 8);   // 1-bit visited bitmap
         auto s = se_bfs(oracle, src, [](node_t, uint64_t) {});
-        aux_alive_rss = status_kb("VmRSS:");         // choice dict still alive
+        aux_alive_rss = status_kb("VmRSS:");         // NOTE: se_bfs frees its bitmap+frontier on return, so this ~= graph floor; the real bfs-se peak is peak_hwm
         visited = s.visited;
     } else if (mode == "bfs-base") {
         aux_fixed = (long)(N * sizeof(uint32_t));    // 32-bit distance array
