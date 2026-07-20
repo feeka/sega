@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21402042.svg)](https://doi.org/10.5281/zenodo.21402042)
 # sega
 
 Space-efficient BFS and DFS on succinct de Bruijn graphs.
