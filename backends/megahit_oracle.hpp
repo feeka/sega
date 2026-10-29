@@ -7,7 +7,7 @@
 // kmlib, parallel_hashmap, pprintpp, utils.h).
 //
 // API used — verified from megahit/src/sdbg/sdbg.h (voutcn/megahit):
-//   uint64_t size() const;                     // node/edge count; nodes are [0,size())
+//   uint64_t size() const;                     // edge-ID universe [0,size())
 //   uint32_t k() const;
 //   bool     IsValidEdge(uint64_t) const;
 //   int      EdgeOutdegree(uint64_t) const;    // -1 if invalid
@@ -16,8 +16,11 @@
 //   int      IncomingEdges(uint64_t, uint64_t* in ) const;
 //   void     LoadFromFile(const char* prefix);
 //
-// A "node" here is a MEGAHIT edge id (a k-mer); adjacency is edge->edge, exactly
-// how MCAAT traverses it. Out/in-degree are bounded by sigma = 4.
+// Traversal vertices are MEGAHIT stored edge IDs; adjacency is edge->edge.
+// N includes invalid/dummy IDs, so N is not the valid-vertex or traversed count.
+// MEGAHIT parameter k denotes node-label length; a stored edge spells k+1 bases.
+// The original SDBG edges and the adjacency arcs traversed here are distinct.
+// Out/in-degree are bounded by sigma = 4.
 
 #pragma once
 #if defined(SDBGT_WITH_MEGAHIT)
@@ -32,26 +35,33 @@ public:
     explicit MegaHitOracle(const SDBG& g) : g_(g) {}
 
     size_t N() const { return g_.size(); }
-    bool valid(node_t v) const { return g_.IsValidEdge(v); }
+    bool valid(node_t v) const { return v < N() && g_.IsValidEdge(v); }
 
-    int outdeg(node_t v) const { int d = g_.EdgeOutdegree(v); return d < 0 ? 0 : d; }
-    int indeg(node_t v)  const { int d = g_.EdgeIndegree(v);  return d < 0 ? 0 : d; }
+    int outdeg(node_t v) const {
+        return valid(v) ? detail::checked_degree(g_.EdgeOutdegree(v)) : 0;
+    }
+    int indeg(node_t v) const {
+        return valid(v) ? detail::checked_degree(g_.EdgeIndegree(v)) : 0;
+    }
 
     int outgoing(node_t v, node_t out[kSigma]) const {
-        uint64_t buf[8];                       // sigma<=4; buffer padded for safety
-        int d = g_.OutgoingEdges(v, buf);
-        if (d <= 0) return 0;
-        int n = d < kSigma ? d : kSigma;
-        for (int i = 0; i < n; ++i) out[i] = buf[i];
-        return n;
+        if (!valid(v)) return 0;
+        // Validate the degree before asking the upstream buffer-writing API to
+        // populate four slots. This extra degree navigation is included in all
+        // timed variants, and prevents silent truncation or buffer overflow.
+        const int expected = outdeg(v);
+        const int d = detail::checked_degree(g_.OutgoingEdges(v, out));
+        if (d != expected) throw std::runtime_error("unstable outgoing adjacency");
+        for (int i=0;i<d;++i) if (out[i]>=N()) throw std::out_of_range("MEGAHIT outgoing ID out of range");
+        return d;
     }
     int incoming(node_t v, node_t in[kSigma]) const {
-        uint64_t buf[8];
-        int d = g_.IncomingEdges(v, buf);
-        if (d <= 0) return 0;
-        int n = d < kSigma ? d : kSigma;
-        for (int i = 0; i < n; ++i) in[i] = buf[i];
-        return n;
+        if (!valid(v)) return 0;
+        const int expected = indeg(v);
+        const int d = detail::checked_degree(g_.IncomingEdges(v, in));
+        if (d != expected) throw std::runtime_error("unstable incoming adjacency");
+        for (int i=0;i<d;++i) if (in[i]>=N()) throw std::out_of_range("MEGAHIT incoming ID out of range");
+        return d;
     }
 
 private:

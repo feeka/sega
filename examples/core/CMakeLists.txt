@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(sega_consumer LANGUAGES CXX)
+find_package(sega CONFIG REQUIRED)
+add_executable(sega_example main.cpp)
+target_link_libraries(sega_example PRIVATE sega::core)

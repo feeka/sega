@@ -1,5 +1,10 @@
 # build output
 /build/
+/build-*/
+/results/
+/representation-tools/
+__pycache__/
+*.pyc
 *.exe
 *.o
 *.obj
@@ -14,6 +19,7 @@ succinct-traversal-results.html
 *.kmc_*
 /data/
 /scratch/
+/libs/sdsl-lite/
 
 # editor / OS
 .vscode/

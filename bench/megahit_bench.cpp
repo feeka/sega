@@ -1,101 +1,91 @@
-// megahit_bench.cpp — REAL memory + time measurement of one traversal on a real
-// MEGAHIT SDBG. One method per process (so VmHWM is that method's peak, not
-// polluted by another). Reports:
-//   graph_rss_kb     : VmRSS right after loading the SDBG (the graph floor)
-//   aux_fixed_bytes  : exact resident size of the method's bookkeeping structures
-//   aux_alive_rss_kb : VmRSS with the aux still allocated (measured aux cost)
-//   peak_hwm_kb      : VmHWM = process peak resident set (real OS number)
-//   wall_ms          : traversal wall time (excludes load)
-//
-// Traversals use no-op callbacks, so the aux measured IS the algorithm's working
-// set (no result-recording overhead).
-//
-// Build: `cmake -B build && cmake --build build` (megahit vendored at libs/megahit),
-// then ./build/megahit_bench <graph_prefix> <bfs-se|bfs-base|dfs-se|dfs-base>.
-// Manual, from repo root: MH=libs/megahit/src ; g++ -std=c++17 -O2 -march=native
-//   -pthread -DSDBGT_WITH_MEGAHIT -Iinclude -Ibackends -I$MH bench/megahit_bench.cpp
-//   $MH/sdbg/sdbg_meta.cpp $MH/sdbg/sdbg_raw_content.cpp -o megahit_bench
-#define SDBGT_WITH_MEGAHIT 1
-#include "sdbg_traverse/nav_oracle.hpp"
-#include "sdbg_traverse/choice_dictionary.hpp"
-#include "sdbg_traverse/bfs.hpp"
-#include "sdbg_traverse/dfs.hpp"
+#include "benchmark_driver.hpp"
 #include "megahit_oracle.hpp"
+#include "sdbg/sdbg_item.h"
+#include <filesystem>
+#include <map>
+#include <set>
 
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <chrono>
-
-using namespace sdbgt;
-
-static long status_kb(const char* key) {
-    FILE* f = std::fopen("/proc/self/status", "r");
-    if (!f) return -1;
-    char line[256];
-    long val = -1;
-    size_t klen = std::strlen(key);
-    while (std::fgets(line, sizeof line, f)) {
-        if (std::strncmp(line, key, klen) == 0) { std::sscanf(line + klen, " %ld", &val); break; }
+// MEGAHIT's loader assumes valid framing; preflight files in Release too.
+static void check_files(const std::string &prefix) {
+  std::ifstream in(prefix + ".sdbg_info");
+  if (!in)
+    throw std::runtime_error("cannot read graph metadata: " + prefix +
+                             ".sdbg_info");
+  auto field = [&](const char *expected) {
+    std::string key, value;
+    if (!(in >> key >> value) || key != expected)
+      throw std::runtime_error(std::string("invalid SDBG metadata field: ") +
+                               expected);
+    return sega_bench::uint_arg(value, expected);
+  };
+  auto k = field("k"), words = field("words_per_tip_label"),
+       buckets = field("num_buckets"), files = field("num_files");
+  if (k == 0 || k > kMaxK || words != (k + 15) / 16 || buckets < 4 ||
+      buckets % 4 || files == 0)
+    throw std::runtime_error("unsupported or empty SDBG metadata");
+  std::map<uint64_t, uint64_t> end_offsets;
+  std::set<uint64_t> seen_buckets;
+  uint64_t items = 0;
+  auto sum = [](uint64_t a, uint64_t b) {
+    if (a > UINT64_MAX - b)
+      throw std::overflow_error("SDBG size overflow");
+    return a + b;
+  };
+  auto mul = [](uint64_t a, uint64_t b) {
+    if (b && a > UINT64_MAX / b)
+      throw std::overflow_error("SDBG size overflow");
+    return a * b;
+  };
+  for (uint64_t i = 0; i < buckets; ++i) {
+    std::string values[6];
+    uint64_t v[6];
+    for (int j = 0; j < 6; ++j) {
+      if (!(in >> values[j]))
+        throw std::runtime_error("truncated SDBG metadata");
+      v[j] = sega_bench::uint_arg(values[j], "bucket record");
     }
-    std::fclose(f);
-    return val;
+    if ((v[0] == UINT64_MAX) != (v[1] == UINT64_MAX))
+      throw std::runtime_error("partially null SDBG bucket record");
+    if (v[0] == UINT64_MAX) {
+      if (v[2] || v[3] || v[4] || v[5])
+        throw std::runtime_error("nonempty null SDBG bucket record");
+      continue;
+    }
+    if (v[0] >= buckets || v[1] >= files || v[4] > v[3] || v[5] > v[3] ||
+        !seen_buckets.insert(v[0]).second)
+      throw std::runtime_error("invalid SDBG bucket record");
+    uint64_t length = sum(
+        mul(v[3], sizeof(SdbgItem)),
+        sum(mul(v[4], words * sizeof(label_word_t)), mul(v[5], sizeof(mul_t))));
+    if (v[2] != end_offsets[v[1]])
+      throw std::runtime_error("noncontiguous SDBG file offsets");
+    end_offsets[v[1]] = sum(v[2], length);
+    items = sum(items, v[3]);
+  }
+  std::string extra;
+  if (in >> extra)
+    throw std::runtime_error("unexpected trailing SDBG metadata");
+  if (!items)
+    throw std::runtime_error("SDBG has no stored items");
+  for (const auto &item : end_offsets) {
+    const auto path = prefix + ".sdbg." + std::to_string(item.first);
+    if (!std::filesystem::is_regular_file(path) ||
+        std::filesystem::file_size(path) != item.second)
+      throw std::runtime_error(
+          "SDBG file missing or size disagrees with metadata: " + path);
+  }
 }
-
-int main(int argc, char** argv) {
-    if (argc < 3) { std::fprintf(stderr, "usage: megahit_bench <prefix> <bfs-se|bfs-base|dfs-se|dfs-base>\n"); return 2; }
-    SDBG g;
-    g.LoadFromFile(argv[1]);
-    MegaHitOracle oracle(g);
-    const size_t N = oracle.N();
-    const std::string mode = argv[2];
-
-    node_t src = kNoNode;
-    for (node_t v = 0; v < N; ++v) if (oracle.valid(v)) { src = v; break; }
-
-    const long graph_rss = status_kb("VmRSS:");     // graph floor
-    long aux_fixed = 0, aux_alive_rss = -1;
-    unsigned long long visited = 0;
-
-    using clk = std::chrono::steady_clock;
-    auto t0 = clk::now();
-
-    if (mode == "bfs-se") {
-        aux_fixed = (long)((N + 63) / 64 * 8);   // 1-bit visited bitmap
-        auto s = se_bfs(oracle, src, [](node_t, uint64_t) {});
-        aux_alive_rss = status_kb("VmRSS:");         // NOTE: se_bfs frees its bitmap+frontier on return, so this ~= graph floor; the real bfs-se peak is peak_hwm
-        visited = s.visited;
-    } else if (mode == "bfs-base") {
-        aux_fixed = (long)(N * sizeof(uint32_t));    // 32-bit distance array
-        auto s = baseline_bfs(oracle, src, [](node_t, uint64_t) {});
-        visited = s.visited;                         // dist freed on return -> use peak_hwm
-    } else if (mode == "dfs-se") {
-        ChoiceDictionary visited_cd(N);
-        TwoBitArray psym(N);
-        aux_fixed = (long)(visited_cd.resident_bytes() + psym.resident_bytes());
-        auto s = se_dfs(oracle, src, visited_cd, psym, [](node_t, node_t) {}, [](node_t) {});
-        aux_alive_rss = status_kb("VmRSS:");         // visited + trail still alive
-        visited = s.discovered;
-    } else if (mode == "dfs-base") {
-        std::vector<uint8_t> state(N, 0);
-        aux_fixed = (long)state.size();
-        auto s = baseline_dfs_explicit(oracle, src, state, [](node_t, node_t) {}, [](node_t) {});
-        aux_alive_rss = status_kb("VmRSS:");         // state array still alive (stack peak via hwm)
-        visited = s.discovered;
-    } else {
-        std::fprintf(stderr, "unknown mode: %s\n", mode.c_str());
-        return 2;
-    }
-
-    auto t1 = clk::now();
-    double wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    const long peak_hwm = status_kb("VmHWM:");
-
-    std::printf("mode=%s N=%zu k=%u visited=%llu graph_rss_kb=%ld aux_fixed_bytes=%ld "
-                "aux_alive_rss_kb=%ld peak_hwm_kb=%ld wall_ms=%.1f\n",
-                mode.c_str(), N, g.k(), visited, graph_rss, aux_fixed,
-                aux_alive_rss, peak_hwm, wall_ms);
-    return 0;
+int main(int argc, char **argv) {
+  try {
+    auto o = sega_bench::parse(argc, argv, false);
+    const auto start = sega_bench::Clock::now();
+    check_files(o.input);
+    SDBG graph;
+    graph.LoadFromFile(o.input.c_str());
+    sdbgt::MegaHitOracle oracle(graph);
+    return sega_bench::benchmark(oracle, o, "megahit", graph.k(),
+                                 sega_bench::milliseconds(start));
+  } catch (const std::exception &e) {
+    return sega_bench::report_error(e);
+  }
 }

@@ -1,0 +1,7 @@
+{
+  "megahit": {"url": "https://github.com/voutcn/megahit.git", "revision": "c77d45c1f516e4f4a90c255c5c6d0c8ba27c017f"},
+  "metagraph": {"url": "https://github.com/ratschlab/metagraph.git", "revision": "cc656d1f277a8d811fd81c1ce8f509274042d29a"},
+  "bifrost": {"url": "https://github.com/pmelsted/bifrost.git", "revision": "eaf750641a8f2de5694141b15a896d4ac749f2a3"},
+  "sbwt": {"url": "https://github.com/algbio/SBWT.git", "revision": "b6e683096979774b69b9e15156f2d9863c909edd"},
+  "sshash": {"url": "https://github.com/jermp/sshash.git", "revision": "2ea1f8bbfa1e56bc072329176b68079ba5a707c1"}
+}

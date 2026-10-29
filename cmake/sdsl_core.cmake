@@ -1,0 +1,26 @@
+# Only the upstream core needed by integer wavelet trees. Avoid upstream's
+# global compiler flags, forced Release mode and suffix-array/test dependencies.
+set(SEGA_SDSL_REVISION "c32874cb2d8524119f25f3b501526fe692df29f4")
+set(SEGA_SDSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/sdsl-lite")
+if(NOT EXISTS "${SEGA_SDSL_DIR}/include/sdsl/wt_int.hpp")
+    message(FATAL_ERROR "General graphs require SDSL. Run python3 scripts/fetch_sdsl.py, then configure again.")
+endif()
+if(EXISTS "${SEGA_SDSL_DIR}/.git")
+    execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${SEGA_SDSL_DIR}"
+        OUTPUT_VARIABLE actual_revision OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE revision_status)
+    if(NOT revision_status EQUAL 0 OR NOT actual_revision STREQUAL SEGA_SDSL_REVISION)
+        message(FATAL_ERROR "SDSL must be at ${SEGA_SDSL_REVISION}; found ${actual_revision}")
+    endif()
+endif()
+set(sdsl_core_sources bits config io memory_management ram_filebuf ram_fs
+    sfstream util wt_helper rrr_vector_15 uint128_t uint256_t)
+set(sdsl_core_files "")
+foreach(name IN LISTS sdsl_core_sources)
+    list(APPEND sdsl_core_files "${SEGA_SDSL_DIR}/lib/${name}.cpp")
+endforeach()
+add_library(sega_sdsl STATIC ${sdsl_core_files})
+target_include_directories(sega_sdsl SYSTEM PUBLIC "${SEGA_SDSL_DIR}/include")
+target_compile_options(sega_sdsl PRIVATE -w)
+find_package(Threads REQUIRED)
+target_link_libraries(sega_sdsl PUBLIC Threads::Threads)
+target_compile_definitions(sega_sdsl PUBLIC SEGA_SDSL_REVISION="${SEGA_SDSL_REVISION}")

@@ -1,47 +1,158 @@
 cmake_minimum_required(VERSION 3.16)
-project(sdbg_traverse CXX)
-
+project(sega VERSION 0.3.0 LANGUAGES CXX)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+add_library(sega_core INTERFACE)
+add_library(sega::core ALIAS sega_core)
+set_target_properties(sega_core PROPERTIES EXPORT_NAME core)
+target_compile_features(sega_core INTERFACE cxx_std_17)
+target_include_directories(sega_core INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+install(TARGETS sega_core EXPORT segaTargets)
+install(EXPORT segaTargets NAMESPACE sega:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sega)
+configure_package_config_file(cmake/segaConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/segaConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sega)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/segaConfigVersion.cmake
+    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/segaConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/segaConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sega)
+# Deliberately install only dependency-free generic headers and their own-code helpers.
+install(FILES include/sega/sega.hpp include/sega/graph_types.hpp
+    include/sega/compact_graph.hpp include/sega/packed_array.hpp
+    include/sega/elias_fano.hpp include/sega/packed_graph.hpp
+    include/sega/general_traversal.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sega)
+install(FILES include/sdbg_traverse/nav_oracle.hpp include/sdbg_traverse/choice_dictionary.hpp
+    include/sdbg_traverse/validation.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sdbg_traverse)
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/sega)
+option(SEGA_BUILD_TOOLS "Build research tools and tests (OFF installs only the standalone core)" ON)
+if(NOT SEGA_BUILD_TOOLS)
+    return()
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
+option(SEGA_NATIVE "Optimize for the build machine CPU (recorded in metadata)" OFF)
+option(SEGA_BUILD_MEGAHIT "Build MEGAHIT tools when submodule is present" ON)
+option(SEGA_BUILD_LEGACY_TOOLS "Build legacy memory-heavy checker/HTML report" OFF)
+option(SEGA_SANITIZERS "Enable address and undefined-behavior sanitizers" OFF)
+option(SEGA_BUILD_GENERAL "Build experimental arbitrary-degree graph backend (requires pinned SDSL)" OFF)
 add_compile_options(-Wall -Wextra)
+if(SEGA_NATIVE)
+    add_compile_options(-march=native)
+endif()
+if(SEGA_SANITIZERS)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+include_directories(include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+# Always refresh provenance before compiling consumers. The script preserves
+# header mtime if unchanged, so an ordinary rebuild does not recompile tools.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" SEGA_CONFIG_UPPER)
+set(SEGA_BUILD_FLAGS "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}; ${CMAKE_BUILD_TYPE}; ${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${SEGA_CONFIG_UPPER}}; native=${SEGA_NATIVE}; sanitizers=${SEGA_SANITIZERS}")
+add_custom_target(sega_build_info ALL
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSEGA_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DSEGA_OUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/sega_build_info.hpp"
+        "-DSEGA_BUILD_FLAGS=${SEGA_BUILD_FLAGS}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_build_info.cmake"
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/sega_build_info.hpp"
+    VERBATIM)
 
-include_directories(include)
-
-# ── Tests: dependency-free (InMemoryOracle). Always built. ────────────────────
 enable_testing()
 add_executable(test_traversal tests/test_traversal.cpp)
 add_test(NAME traversal COMMAND test_traversal)
+add_executable(test_validation tests/test_validation.cpp)
+add_test(NAME validation COMMAND test_validation)
+add_executable(sega_bench bench/sega_bench.cpp)
+add_dependencies(sega_bench sega_build_info)
+add_executable(compact_graph_bench bench/compact_graph_bench.cpp)
+add_dependencies(compact_graph_bench sega_build_info)
+add_executable(test_compact_graph tests/test_compact_graph.cpp)
+add_test(NAME compact_graph COMMAND test_compact_graph)
+add_executable(test_packed_storage tests/test_packed_storage.cpp)
+target_link_libraries(test_packed_storage PRIVATE sega::core)
+add_test(NAME packed_storage COMMAND test_packed_storage)
+add_executable(sega_core_example examples/core/main.cpp)
+target_link_libraries(sega_core_example PRIVATE sega::core)
+add_test(NAME core_example COMMAND sega_core_example)
 
-# ── MEGAHIT SDBG backend (PRIMARY). Auto-enabled when the submodule is present. ─
-# Vendored at libs/megahit (git submodule). Loading + navigating an SDBG needs
-# only two .cpp; kmlib / parallel_hashmap / pprintpp are header-only.
-set(MEGAHIT_SRC "${CMAKE_SOURCE_DIR}/libs/megahit/src")
-if(EXISTS "${MEGAHIT_SRC}/sdbg/sdbg.h")
-    message(STATUS "MEGAHIT SDBG backend: ENABLED (libs/megahit)")
-    add_library(megahit_sdbg STATIC
-        ${MEGAHIT_SRC}/sdbg/sdbg_meta.cpp
-        ${MEGAHIT_SRC}/sdbg/sdbg_raw_content.cpp)
-    target_include_directories(megahit_sdbg SYSTEM PUBLIC ${MEGAHIT_SRC})   # SYSTEM = silence 3rd-party warnings
-    target_compile_options(megahit_sdbg PRIVATE -march=native -w)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME packed_graph_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/packed_graph_integration.py" "$<TARGET_FILE:compact_graph_bench>")
+    add_test(NAME core_install COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_install.py" "${CMAKE_COMMAND}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME compact_graph_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/compact_graph_integration.py" "$<TARGET_FILE:compact_graph_bench>")
+    add_test(NAME benchmark_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_integration.py" "$<TARGET_FILE:sega_bench>")
+    add_test(NAME experiment_runner COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tests" -v)
+endif()
 
+if(SEGA_BUILD_GENERAL)
+    include(cmake/sdsl_core.cmake)
+    set_target_properties(sega_sdsl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(sega_assembly SHARED backends/assembly_c_api.cpp)
+    target_link_libraries(sega_assembly PRIVATE sega_sdsl)
+    add_executable(test_assembly_graph tests/test_assembly_graph.cpp)
+    target_link_libraries(test_assembly_graph PRIVATE sega_sdsl)
+    add_test(NAME assembly_graph COMMAND test_assembly_graph)
+    add_executable(test_general_graph tests/test_general_graph.cpp)
+    target_link_libraries(test_general_graph PRIVATE sega_sdsl)
+    add_test(NAME general_graph COMMAND test_general_graph)
+    add_executable(general_graph_bench bench/general_graph_bench.cpp)
+    target_link_libraries(general_graph_bench PRIVATE sega_sdsl)
+    add_dependencies(general_graph_bench sega_build_info)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME general_graph_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/general_graph_integration.py" "$<TARGET_FILE:general_graph_bench>")
+    endif()
+endif()
+
+set(MEGAHIT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/libs/megahit/src")
+if(SEGA_BUILD_MEGAHIT AND EXISTS "${MEGAHIT_SRC}/sdbg/sdbg.h")
+    message(STATUS "MEGAHIT SDBG backend: enabled")
+    add_library(megahit_sdbg STATIC ${MEGAHIT_SRC}/sdbg/sdbg_meta.cpp ${MEGAHIT_SRC}/sdbg/sdbg_raw_content.cpp)
+    set_target_properties(megahit_sdbg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(megahit_sdbg SYSTEM PUBLIC ${MEGAHIT_SRC})
+    target_compile_options(megahit_sdbg PRIVATE -w)
     find_package(Threads REQUIRED)
-    set(MH_TOOLS megahit_run:tests/megahit_run.cpp
-                 megahit_bench:bench/megahit_bench.cpp
-                 sdbg_report:bench/sdbg_report.cpp)
-    foreach(pair ${MH_TOOLS})
-        string(REPLACE ":" ";" kv ${pair})
-        list(GET kv 0 tool)
-        list(GET kv 1 src)
-        add_executable(${tool} ${src})
-        target_compile_definitions(${tool} PRIVATE SDBGT_WITH_MEGAHIT)
-        target_compile_options(${tool} PRIVATE -march=native)
-        target_include_directories(${tool} PRIVATE backends)
-        target_link_libraries(${tool} PRIVATE megahit_sdbg Threads::Threads)
-    endforeach()
-    target_compile_definitions(sdbg_report PRIVATE _GNU_SOURCE)   # expose popen() regardless of -std mode
+    add_library(sega_megahit_assembly SHARED backends/megahit_assembly_c_api.cpp)
+    target_compile_definitions(sega_megahit_assembly PRIVATE SDBGT_WITH_MEGAHIT)
+    target_include_directories(sega_megahit_assembly PRIVATE backends)
+    target_link_libraries(sega_megahit_assembly PRIVATE megahit_sdbg Threads::Threads)
+    add_executable(test_megahit_unitig tests/test_megahit_unitig.cpp)
+    target_compile_definitions(test_megahit_unitig PRIVATE SDBGT_WITH_MEGAHIT)
+    target_include_directories(test_megahit_unitig PRIVATE backends)
+    target_link_libraries(test_megahit_unitig PRIVATE megahit_sdbg Threads::Threads)
+    add_executable(megahit_bench bench/megahit_bench.cpp)
+    add_dependencies(megahit_bench sega_build_info)
+    target_compile_definitions(megahit_bench PRIVATE SDBGT_WITH_MEGAHIT)
+    target_include_directories(megahit_bench PRIVATE backends)
+    target_link_libraries(megahit_bench PRIVATE megahit_sdbg Threads::Threads)
+    add_executable(generate_fixture tests/generate_fixture.cpp ${MEGAHIT_SRC}/sdbg/sdbg_writer.cpp)
+    target_compile_definitions(generate_fixture PRIVATE SDBGT_WITH_MEGAHIT)
+    target_include_directories(generate_fixture PRIVATE backends)
+    target_link_libraries(generate_fixture PRIVATE megahit_sdbg Threads::Threads)
+    add_executable(test_native_cursor tests/test_native_cursor.cpp)
+    target_compile_definitions(test_native_cursor PRIVATE SDBGT_WITH_MEGAHIT)
+    target_include_directories(test_native_cursor PRIVATE backends)
+    target_link_libraries(test_native_cursor PRIVATE megahit_sdbg Threads::Threads)
+
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME megahit_unitig COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/megahit_unitig_integration.py" "$<TARGET_FILE:generate_fixture>" "$<TARGET_FILE:test_megahit_unitig>")
+        add_test(NAME megahit_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/megahit_integration.py" "$<TARGET_FILE:generate_fixture>" "$<TARGET_FILE:megahit_bench>" "$<TARGET_FILE:test_native_cursor>")
+    endif()
+    if(SEGA_BUILD_LEGACY_TOOLS)
+        message(WARNING "Legacy tools retain graph-sized verification output. Use scripts/run_experiments.py for research measurements.")
+        add_executable(megahit_run tests/megahit_run.cpp)
+        add_executable(sdbg_report bench/sdbg_report.cpp)
+        foreach(tool megahit_run sdbg_report)
+            target_compile_definitions(${tool} PRIVATE SDBGT_WITH_MEGAHIT)
+            target_include_directories(${tool} PRIVATE backends)
+            target_link_libraries(${tool} PRIVATE megahit_sdbg Threads::Threads)
+        endforeach()
+    endif()
 else()
-    message(STATUS "MEGAHIT SDBG backend: DISABLED — run: git submodule update --init --recursive")
+    message(STATUS "MEGAHIT SDBG backend disabled; initialize submodule to enable")
 endif()
