@@ -5,8 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
-TOOLS = {"bifrost": "Bifrost", "metagraph": "MetaGraph", "megahit": "MEGAHIT",
-         "sbwt": "SBWT", "sshash": "SSHash", "bcalm": "BCALM2"}
+TOOLS = {"bifrost": "Bifrost", "metagraph": "MetaGraph", "megahit": "MEGAHIT"}
 METHODS = {
     "bfs-base": ("Standard breadth-first search", "Visits nearby vertices first and keeps a distance for every vertex. Uses 64-bit queue entries."),
     "bfs-base32": ("Standard breadth-first search, smaller queue entries", "The same search with 32-bit queue entries. The distance array is unchanged."),
@@ -68,11 +67,14 @@ def read_case(out):
 
 
 def render_body(builds, runs, verification, workload):
+    historical_extra_tools = (set(builds) | {r['backend'] for r in runs}) - set(TOOLS)
+    builds = {name: b for name, b in builds.items() if name in TOOLS}
+    runs = [r for r in runs if r['backend'] in TOOLS]
     groups = defaultdict(list)
     for r in runs:
         if r.get('status') == 'ok':
             groups[(r['backend'], r['operation'], r.get('source', 'n/a'))].append(r)
-    names = sorted((set(builds) | {r['backend'] for r in runs}) - {'bcalm'})
+    names = sorted(set(builds) | {r['backend'] for r in runs})
     def rows(name, op, source='n/a'):
         return groups.get((name, op, source), [])
     def value(name, op, field, source='n/a', scale=1):
@@ -89,6 +91,9 @@ def render_body(builds, runs, verification, workload):
     body = f'<h1>Comparing graph tools on the same data</h1><p>Each vertex represents a {k}-letter DNA fragment. '
     body += f'The recorded graph counts are <strong>{span(r.get("oriented_kmers") for r in stats)} vertices</strong> and '
     body += f'<strong>{span(r.get("arcs") for r in stats)} directed links</strong>. The two DNA orientations count separately.</p>'
+    body += '<p><strong>Tools in this comparison: MEGAHIT, MetaGraph and Bifrost.</strong></p>'
+    if historical_extra_tools:
+        body += '<p class="small">This page shows only the three retained tools. Original measurement files are preserved and may contain earlier configurations.</p>'
     if workload.get('mode') == 'mini':
         body += '<p class="note">This is a small correctness test. Its timings and memory readings describe this example; they do not establish which tool wins on large biological datasets.</p>'
     else:
@@ -141,7 +146,6 @@ def render_body(builds, runs, verification, workload):
                             fmt(builds.get(name, {}).get('serialized_bytes'), 0),
                             fmt(value(name, 'load', 'load_and_adapter_ms')), len(rows(name, 'load'))])
     body += table(['Tool', 'RAM after opening (MiB)', 'Saved graph/index (bytes)', 'Time to open (ms)', 'Completed runs'], memory_rows)
-    body += '<p>BCALM2 is measured for building and exporting the graph only. This integration has no BCALM2 query/search index, so it has no comparable “RAM after opening” result.</p>'
     body += '<h2 id="searches">Search results: compare the same column and starting point</h2>'
     body += '<p>Breadth-first search (BFS) explores nearby vertices first. Depth-first search (DFS) follows a branch before returning to explore another. '
     body += 'All search methods here are run by our measurement program through each tool’s graph interface; these are not end-to-end assembler timings. '
@@ -209,27 +213,27 @@ def render_body(builds, runs, verification, workload):
                             fmt(value(n, op, 'operation_ms', 'forest')), fmt(aux(n, op, 'forest'), 2),
                             fmt(value(n, op, 'peak_process_rss_kib', 'forest', 1024), 2), len(rows(n, op, 'forest'))] for n in names])
         body += '</details>'
-    body += '<details><summary>Time and memory for building each graph</summary><p>One construction per tool. SSHash totals include its BCALM2 preprocessing. '
+    body += '<details><summary>Time and memory for building each graph</summary><p>One construction per tool. '
     body += 'Memory is sampled across the builder and its child processes; brief peaks can be missed, and shared pages can be counted more than once. '
     body += 'This is different from the single-program RAM measurements above. Common input preparation is excluded from these construction times.</p>'
     construction = []
     for name, b in builds.items():
-        dep = builds.get(b.get('preprocessing_dependency'), {})
         ok = b.get('status') == 'ok'
-        seconds = b.get('build_wall_seconds', 0) + dep.get('build_wall_seconds', 0) if ok else None
-        peak = max(b.get('sampled_peak_build_tree_rss_bytes', 0), dep.get('sampled_peak_build_tree_rss_bytes', 0)) / 1024**2 if ok else None
+        seconds = b.get('build_wall_seconds') if ok else None
+        peak_bytes = b.get('sampled_peak_build_tree_rss_bytes') if ok else None
+        peak = peak_bytes / 1024**2 if peak_bytes is not None else None
         construction.append([TOOLS.get(name, name), b.get('status', 'unknown'), fmt(seconds), fmt(peak, 2), fmt(b.get('serialized_bytes'), 0)])
     body += table(['Tool', 'Build result', 'Construction time (seconds)', 'Sampled construction RAM (MiB)', 'Saved output (bytes)'], construction)
-    body += '<p>BCALM2 exports DNA paths in a text file. Its output size is not the size of a searchable index.</p></details>'
-    body += '<h2 id="names">What the names mean</h2><p><strong>MEGAHIT, MetaGraph, Bifrost, SBWT and SSHash</strong> are the graph storage/index tools under test. '
-    body += '<strong>BCALM2</strong> builds compacted DNA paths. <strong>SEGA</strong> is our traversal code, applied to the different graph tools. '
+    body += '</details>'
+    body += '<h2 id="names">What the names mean</h2><p><strong>MEGAHIT and MetaGraph</strong> supply succinct de Bruijn graphs. <strong>Bifrost</strong> supplies a compacted de Bruijn graph. '
+    body += '<strong>SEGA</strong> is our traversal code, applied to these three graph libraries. '
     body += 'BFS and DFS name search methods, not extra competing graph tools.</p>'
     body += '<details><summary>Translate the old codes in the raw files</summary>'
     body += table(['Old code', 'Readable name', 'Meaning'], [(op, *entry) for op, entry in OPERATIONS.items()])
     body += '<p>“32” means smaller vertex-number entries; it does not mean 32 repeats. “Source” means starting vertex. '
     body += '“n/a” means that the operation has no single starting vertex. “Auxiliary” means extra working memory. '
     body += '“RSS” means the program’s resident RAM. “Serialized bytes” means saved file size. The excluded two-frontier BFS methods are not included.</p></details>'
-    issues = list(verification.get('failures', []))
+    issues = [r for r in verification.get('failures', []) if not r.get('backend') or r['backend'] in TOOLS]
     issues += [r for r in runs if r.get('status') != 'ok']
     issues += [b for b in builds.values() if b.get('status') != 'ok']
     if issues:

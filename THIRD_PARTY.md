@@ -31,8 +31,8 @@ Sarand source above. Source and license notices for MEGAHIT remain in
 
 The optional benchmark setup downloads separate upstream projects at the commits
 recorded in `representations/upstreams.json`. Their source trees retain their own
-licenses: Bifrost (BSD 2-Clause), SSHash (MIT), SBWT (GPL v2), MetaGraph (GPL v3),
-and MEGAHIT (GPL v3). BCALM2 and the binary environment packages also retain their
+licenses: Bifrost (BSD 2-Clause), MetaGraph (GPL v3), and MEGAHIT (GPL v3).
+The binary environment packages also retain their
 upstream licenses and package metadata. The SEGA license does not replace those
 licenses. The source-only benchmark bundle does not include their compiled
 binaries or relicense their source. Setup records its compatibility patches and

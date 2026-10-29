@@ -94,12 +94,12 @@ At k=23 and N=807,721,414, the original WSL2 report measured BFS 2.07 versus 4.8
 
 ## Measurements across de Bruijn graph representations
 
-The [six-tool benchmark guide](docs/representation-benchmarks.md) covers MEGAHIT,
-MetaGraph, Bifrost, BCALM2, SBWT and SSHash. It includes pinned setup, independent
+The [three-tool benchmark guide](docs/representation-benchmarks.md) covers MEGAHIT,
+MetaGraph and Bifrost. It includes pinned setup, independent
 mini-graph checks, graph/component measurements, native traversal adapters,
 resource logging, and a resumable runner for large FASTA/FASTQ datasets.
-BCALM2 is measured as a compacted-graph builder; the other five provide native
-query/traversal indexes. The two-frontier BFS variants are excluded.
+All three supply native de Bruijn graph representations: MEGAHIT and MetaGraph
+are succinct; Bifrost is compacted. The two-frontier BFS variants are excluded.
 
 ```sh
 python3 scripts/setup_representations.py --prefix ./representation-tools --jobs 2

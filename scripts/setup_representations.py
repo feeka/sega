@@ -65,7 +65,7 @@ def main():
             save(prefix/"micromamba-download.json",{"url":url,"sha256":sha256(archive)})
         action="install" if (env_prefix/"conda-meta").exists() else "create"
         command([mamba,action,"-y","-r",prefix/"mamba-cache","-p",env_prefix,"-c","conda-forge","-c","bioconda",
-                 "metagraph=0.5.2","bcalm=2.2.3","libboost-devel=1.85.0","openssl","zstd","automake","autoconf","pkg-config",
+                 "metagraph=0.5.2","libboost-devel=1.85.0","openssl","zstd","automake","autoconf","pkg-config",
                  "cmake>=3.25,<4","python=3.11","psutil>=5.9,<8","llvm-openmp" if platform.system()=="Darwin" else "libgomp"],logs/"environment.log")
         with (prefix/"environment-explicit.txt").open("w") as out:
             subprocess.run([mamba,"list","-p",str(env_prefix),"--explicit"],stdout=out,check=True)
@@ -89,10 +89,6 @@ def main():
         revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=src,text=True).strip()
         if revision!=pin["revision"]:raise RuntimeError(f"Source revision mismatch in {src}; existing checkout preserved")
         command(["git","submodule","update","--init","--recursive","--depth","1"],logs/f"clone-{name}.log",cwd=src)
-        if name=="sbwt":
-            for rel in ("kmc_api/kmer_defs.h","kmc_core/defs.h"):
-                patch(src/"KMC"/rel,"#include <ext/algorithm>","#include <algorithm>",patches)
-            patch(src/"KMC/kmc_core/defs.h","using __gnu_cxx::copy_n;","using std::copy_n;",patches)
         if name=="metagraph":
             patch(src/"metagraph/CMakeLists.txt","set(Boost_USE_STATIC_LIBS ON)","set(Boost_USE_STATIC_LIBS OFF)",patches)
             patch(src/"metagraph/CMakeListsHelpers.txt",'if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")',
@@ -114,9 +110,9 @@ def main():
                           '-DCMAKE_CXX_FLAGS=-nostdinc++ -isystem '+str(llvm/'include/c++/v1'),
                           '-DCMAKE_EXE_LINKER_FLAGS=-L'+str(llvm/'lib/c++')+' -Wl,-rpath,'+str(llvm/'lib/c++')+' -Wl,-rpath,'+str(omp_prefix/'lib')]
         command([cmake,"-S",ROOT/"representations","-B",build,"-DBACKEND="+name,"-DUPSTREAM="+str(src),*flags],logs/f"{name}-configure.log",environment)
-        targets=["repr_probe"]+{"bifrost":["Bifrost"],"sbwt":["sbwt"],"sshash":["sshash"]}.get(name,[])
+        targets=["repr_probe"]+{"bifrost":["Bifrost"]}.get(name,[])
         command([cmake,"--build",build,"--target",*targets,"-j",args.jobs],logs/f"{name}-build.log",environment)
-        builders={"metagraph":env_prefix/"bin/metagraph","bifrost":build/"upstream/src/Bifrost","sbwt":build/"upstream/bin/sbwt","sshash":build/"sshash"}
+        builders={"metagraph":env_prefix/"bin/metagraph","bifrost":build/"upstream/src/Bifrost"}
         if name=="megahit":
             if args.megahit_builder:builder=args.megahit_builder.resolve()
             else:
@@ -148,7 +144,6 @@ def main():
             config[name]['builder_origin']='supplied executable; fingerprinted, source revision not attested by setup'
         config[name]["submodules"]=subprocess.check_output(["git","submodule","status","--recursive"],cwd=src,text=True)
         save(prefix/"tools.json",config)
-    config["bcalm"]={"builder":str(env_prefix/"bin/bcalm"),"version":"2.2.3 (bioconda)"}
     for entry in config.values():
         for key in ("builder","probe"):
             if key in entry:

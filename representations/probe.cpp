@@ -31,7 +31,7 @@ int main(int argc,char** argv) {
     j.number("load_and_adapter_cpu_ms",load_cpu_ms);
     j.number("loaded_process_rss_kib",loaded_rss); j.number("load_peak_process_rss_kib",load_peak);
     j.number("adapter_payload_bytes",g.adapter_bytes());
-    j.string("adapter_accounting",std::string(Graph::name)=="bifrost"?"lower-bound-excludes-hash-allocator-overhead":std::string(Graph::name)=="sbwt"?"allocated-mask-plus-serialized-select-support-bytes":"allocated-vector-payload-or-zero");
+    j.string("adapter_accounting",std::string(Graph::name)=="bifrost"?"lower-bound-excludes-hash-allocator-overhead":"allocated-vector-payload-or-zero");
     j.boolean("trace_enabled",tracing);
     start=Clock::now();cpu_start=std::clock();
     if(op=="stats" || op=="audit") {

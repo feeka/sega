@@ -14,12 +14,14 @@ from .process import run, save, sha256
 from . import reference
 from .reporting import render_report
 
-BACKENDS=("megahit","metagraph","bifrost","bcalm","sbwt","sshash")
+BACKENDS=("megahit","metagraph","bifrost")
 TRAVERSALS=("bfs-base","bfs-base32","bfs-stream","bfs-stream32","dfs-base","dfs-base32","dfs-packed","dfs-packed32","dfs-se")
 DEFAULT_OPS=("load","stats","lookup","neighbors","walk","components","scc","unitigs")+TRAVERSALS
 
 def resolve_config(path):
-    data=json.loads(Path(path).read_text())
+    original=json.loads(Path(path).read_text())
+    # Older setup files may contain tools no longer part of this benchmark.
+    data={name:entry for name,entry in original.items() if name in BACKENDS or name.startswith('_')}
     for name in BACKENDS:
         if name not in data: continue
         for field in ("builder","probe"):
@@ -31,11 +33,8 @@ def resolve_config(path):
 
 def check_tools(tools,backends):
     errors=[]
-    needed=set(backends)
-    if "sshash" in needed: needed.add("bcalm")
-    for name in sorted(needed):
-        fields=("builder",) if name=="bcalm" else ("builder","probe")
-        for field in fields:
+    for name in sorted(set(backends)):
+        for field in ("builder","probe"):
             p=tools.get(name,{}).get(field)
             if not p or not Path(p).is_file() or not os.access(p,os.X_OK): errors.append(f"{name}.{field}: missing executable {p}")
     if errors: raise ValueError("Tool configuration incomplete:\n"+"\n".join(errors))
@@ -50,7 +49,7 @@ def completed_result(path):
         return result
     return None
 
-def build(name,tools,input_file,k,directory,threads,memory_gib,timeout,bcalm_file=None):
+def build(name,tools,input_file,k,directory,threads,memory_gib,timeout):
     directory.mkdir(parents=True,exist_ok=True);tmp=directory/"tmp";tmp.mkdir(exist_ok=True)
     prefix=directory/"graph";builder=tools[name]["builder"]
     budget=max(1,int(memory_gib*.5));commands=[]
@@ -69,19 +68,6 @@ def build(name,tools,input_file,k,directory,threads,memory_gib,timeout,bcalm_fil
     elif name=="bifrost":
         commands=[[builder,"build","-r",input_file,"-k",k,"-m",min(15,k-2),"-t",threads,"-o",prefix,"-b","-T",tmp]]
         artifact=str(prefix)+".bfg";pattern="graph.bf*"
-    elif name=="bcalm":
-        commands=[[builder,"-in",input_file,"-kmer-size",k,"-abundance-min",1,"-abundance-max",2147483647,
-                   "-minimizer-size",min(10,k-1),"-nb-cores",threads,"-max-memory",budget*1024,
-                   "-out",prefix,"-out-dir",directory,"-out-tmp",tmp]]
-        artifact=str(prefix)+".unitigs.fa";pattern="graph.unitigs.fa"
-    elif name=="sbwt":
-        artifact=str(prefix)+".sbwt";pattern="graph.sbwt"
-        commands=[[builder,"build","-i",input_file,"-o",artifact,"-k",k,"--variant","plain-matrix",
-                   "-p",min(6,k-1),"-a",1,"-t",threads,"-m",max(2,budget),"-d",tmp]]
-    elif name=="sshash":
-        if not bcalm_file: raise ValueError("SSHash requires BCALM2's spectrum-preserving strings")
-        artifact=str(prefix)+".sshash";pattern="graph.sshash"
-        commands=[[builder,"build","-i",bcalm_file,"-o",artifact,"-k",k,"-m",min(11,k-1),"-t",threads,"-g",budget,"-d",tmp]]
     else: raise ValueError(name)
     stages=[]
     for i,command in enumerate(commands):
@@ -95,16 +81,6 @@ def build(name,tools,input_file,k,directory,threads,memory_gib,timeout,bcalm_fil
     os_peaks=[s['os_reported_maxrss_bytes'] for s in stages if 'os_reported_maxrss_bytes' in s]
     result['os_reported_build_maxrss_bytes']=max(os_peaks) if len(os_peaks)==len(stages) else None
     result['sampled_peak_workdir_logical_bytes']=max(s['sampled_peak_workdir_logical_bytes'] for s in stages)
-    if name=="sshash": result["preprocessing_dependency"]="bcalm"
-    if name=="bcalm":
-        count=bases=0
-        with open(artifact) as stream:
-            for line in stream:
-                if line.startswith(">"):count+=1
-                else:bases+=len(line.strip())
-        result["unitig_count"]=count;result["unitig_bases"]=bases
-        result["unitig_kmer_occurrences"]=bases-count*(k-1)
-        result["query_capability"]="not provided: native output is a unitig FASTA, not a persistent query index"
     save(directory/"build.json",result);return result
 
 def probe(tools,name,artifact,k,op,directory,queries,memory_gib,timeout,trace=False,source="forest"):
@@ -225,10 +201,9 @@ def main(argv=None):
             prep=previous
         else:save(out/"input.json",metadata)
     builds={};failures=[]
-    order=[b for b in BACKENDS if b in args.backends or (b=="bcalm" and "sshash" in args.backends)]
-    # Dependency first, other construction order reproducibly randomized.
+    order=[b for b in BACKENDS if b in args.backends]
+    # Construction order is reproducibly randomized.
     random.Random(args.seed).shuffle(order)
-    if "bcalm" in order:order.remove("bcalm");order.insert(0,"bcalm")
     for name in order:
         directory=out/"build"/name;record=directory/"build.json"
         try:
@@ -238,14 +213,14 @@ def main(argv=None):
                     if not Path(f["path"]).is_file() or sha256(f["path"])!=f["sha256"]:raise ValueError("Stored graph artifact changed")
             else:
                 print(f"Building {name}...",flush=True)
-                result=build(name,tools,normalized,args.k,directory,args.threads,args.memory_gib,args.timeout,builds.get("bcalm",{}).get("artifact"))
+                result=build(name,tools,normalized,args.k,directory,args.threads,args.memory_gib,args.timeout)
             builds[name]=result
         except Exception as e:
             failures.append({"stage":"build","backend":name,"error":str(e)});builds[name]={"backend":name,"status":"failed","error":str(e)}
             print(f"FAILED {name}: {e}",flush=True)
         save(out/"builds.json",builds)
     verification={"status":"pending","scope":"exhaustive-independent-mini" if words is not None else "sampled-cross-backend-agreement","checks":[],"failures":failures}
-    good=[b for b in args.backends if b!="bcalm" and builds.get(b,{}).get("status")=="ok"]
+    good=[b for b in args.backends if builds.get(b,{}).get("status")=="ok"]
     expected=outgoing=incoming=None
     if words is not None:expected,outgoing,incoming=reference.metrics(words)
     sampled={}; slots={}; sources=prep["sampled_positive_kmers"][:args.sources]
@@ -285,15 +260,6 @@ def main(argv=None):
             verification["checks"].append({"backend":name,"operation":"sampled-membership-and-neighbors","status":"pass","query_count":len(data)})
         except Exception as e:
             failures.append({"stage":"verification","backend":name,"error":str(e)});print(f"FAILED validation {name}: {e}",flush=True)
-    if words is not None and builds.get("bcalm",{}).get("status")=="ok":
-        try:
-            unitig_words=[]
-            for s in reference.sequences(builds["bcalm"]["artifact"],args.k,chunk_size=2**40):
-                unitig_words.extend(min(s[i:i+args.k],reference.rc(s[i:i+args.k])) for i in range(len(s)-args.k+1))
-            if set(unitig_words)!={min(s,reference.rc(s)) for s in words}:raise AssertionError("BCALM2 spectrum mismatch")
-            if len(set(unitig_words))!=len(unitig_words):raise AssertionError("BCALM2 output repeats canonical k-mers; invalid SSHash input")
-            verification["checks"].append({"backend":"bcalm","operation":"exact-spectrum-and-uniqueness","status":"pass"})
-        except Exception as e:failures.append({"stage":"verification","backend":"bcalm","error":str(e)})
     if len(sampled)>1:
         first=next(iter(sampled.values()))
         if any(data!=first for data in sampled.values()):
