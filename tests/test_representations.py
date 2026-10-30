@@ -8,6 +8,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from representations import reference as ref
@@ -120,13 +121,74 @@ class ReferenceTests(unittest.TestCase):
             value={'status':'ok','process':{'status':'ok','returncode':0}}
             path.write_text(json.dumps(value));self.assertEqual(suite.completed_result(path),value)
 
+    def test_timeout_is_opt_in_and_preserved_in_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);reads=root/'reads.fa';reads.write_text('>one\n'+'A'*31+'\n')
+            tools=root/'tools.json';tools.write_text(json.dumps({'megahit':{'builder':sys.executable,'probe':sys.executable}}))
+            with patch.object(suite.reference,'prepare',side_effect=RuntimeError('stop after manifest')):
+                with self.assertRaisesRegex(RuntimeError,'stop after manifest'):
+                    suite.main(['mini','--tools',str(tools),'--input',str(reads),'--out',str(root/'results'),'--backends','megahit'])
+            self.assertIsNone(json.loads((root/'results/manifest.json').read_text())['signature']['timeout'])
+
+    def test_resume_relaxes_only_timeout(self):
+        old={'timeout':3600,'k':31,'driver_sources':[]}
+        for seconds in (None,3600,86400):
+            self.assertEqual(suite.check_resume_signature(old,{**old,'timeout':seconds}),[])
+        for changed in ({**old,'timeout':1},{**old,'k':21},{**old,'inputs':['different']}):
+            with self.assertRaisesRegex(ValueError,'Resume refused'):suite.check_resume_signature(old,changed)
+        with self.assertRaisesRegex(ValueError,'Resume refused'):
+            suite.check_resume_signature({**old,'timeout':None},old)
+
+    def test_only_fingerprinted_timeout_patch_can_migrate(self):
+        root=Path(__file__).resolve().parents[1]
+        rules=json.loads((root/'scripts/representation-resume-compatibility.json').read_text())['files']
+        files=suite.inventory([root/name for name in rules])
+        previous=[{**f,'sha256':rules[str(Path(f['path']).relative_to(root))]['before_sha256']} for f in files]
+        old={'timeout':3600,'driver_sources':previous};new={'timeout':None,'driver_sources':files}
+        self.assertEqual(set(suite.check_resume_signature(old,new)),set(rules))
+        wrong=json.loads(json.dumps(new));wrong['driver_sources'][0]['sha256']='unknown source'
+        with self.assertRaisesRegex(ValueError,'unrecognized code change'):suite.check_resume_signature(old,wrong)
+
+    def test_retry_preserves_failed_files_and_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            out=Path(d);old={'signature':{'timeout':3600},'started_unix':123}
+            original=json.dumps(old);(out/'manifest.json').write_text(original)
+            failed=out/'build/bifrost';failed.mkdir(parents=True);(failed/'build-0.log').write_text('timed out')
+            successful=out/'build/megahit';successful.mkdir();(successful/'build.json').write_text('completed')
+            history=suite.record_resume(out,old,{'timeout':None},[])
+            suite.preserve_retry(failed,out,history)
+            self.assertEqual((history/'manifest.json').read_text(),original)
+            self.assertEqual((history/'build/bifrost/build-0.log').read_text(),'timed out')
+            self.assertEqual((successful/'build.json').read_text(),'completed')
+            current=json.loads((out/'manifest.json').read_text())
+            self.assertIsNone(current['signature']['timeout']);self.assertEqual(current['started_unix'],123)
+
+    def test_recovery_refuses_an_active_experiment(self):
+        from types import SimpleNamespace
+        script=Path(__file__).resolve().parents[1]/'scripts/resume_representations.py'
+        spec=importlib.util.spec_from_file_location('repr_recovery',script);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);out=root/'results'
+            active=SimpleNamespace(pid=-1,info={'cmdline':['python','scripts/run_representations.py','run','--out','results'],'cwd':str(root)})
+            with patch('psutil.process_iter',return_value=[active]):
+                with self.assertRaisesRegex(ValueError,'still running'):module.require_idle(out)
+                module.require_idle(root/'another-experiment')
+
 class ProcessTests(unittest.TestCase):
     def test_memory_guard_stops_own_job(self):
         with tempfile.TemporaryDirectory() as d:
             d=Path(d)
             code="import time; b=bytearray(64*1024*1024); b[::4096]=bytes([1])*len(b[::4096]); time.sleep(10)"
             with self.assertRaisesRegex(RuntimeError,"memory_budget_exceeded"):
-                run([sys.executable,"-c",code],d,d/"memory.log",.03,5)
+                run([sys.executable,"-c",code],d,d/"memory.log",.03,None)
+
+    def test_no_timeout_survives_elapsed_clock_over_one_hour(self):
+        with tempfile.TemporaryDirectory() as d:
+            d=Path(d)
+            with patch('representations.process.time.monotonic',side_effect=itertools.count(step=4000)):
+                result=run([sys.executable,'-c','import time;time.sleep(.15)'],d,d/'unlimited.log',1,None)
+            self.assertEqual(result['status'],'ok');self.assertIsNone(result['timeout_seconds'])
+            self.assertGreater(result['wall_seconds'],3600)
 
     def test_failure_and_timeout_are_not_results(self):
         with tempfile.TemporaryDirectory() as d:

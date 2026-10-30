@@ -77,7 +77,7 @@ def run(command,cwd,log,memory_gib,timeout,env=None,disk_directory=None):
                 if disk_directory is not None and time.monotonic()>=disk_next:
                     disk_peak=max(disk_peak,workdir_bytes());disk_next=time.monotonic()+1
                 if rss>info["rss_limit_bytes"]: status="memory_budget_exceeded";stop(process);break
-                if time.monotonic()-start>timeout: status="timeout";stop(process);break
+                if timeout is not None and time.monotonic()-start>timeout: status="timeout";stop(process);break
                 time.sleep(.05)
             process.wait()
         except BaseException:

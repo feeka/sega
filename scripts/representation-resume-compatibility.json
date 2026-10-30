@@ -1,0 +1,13 @@
+{
+  "description": "Allow only the fingerprinted opt-in timeout/recovery patch when resuming commit 997c405 experiments. All input, binary, graph and workload checks remain enforced.",
+  "files": {
+    "representations/suite.py": {
+      "before_sha256": "84c03a2d8cdac9ccc047acc3f53ef25cc7f90b86578bc192f511603087d79476",
+      "after_sha256": "cad4faa000f8c3a3dfc70261cabf7bd53adcfd4e9cdd3f07046700e325718b2f"
+    },
+    "representations/process.py": {
+      "before_sha256": "d4e462feaca2199e235d78a2d202925c05de0208b92420ad371bd777e93b07a4",
+      "after_sha256": "23287ac1546c57ece8bb82956b9f20b15e3924a3ccb15e94ecc2b66521081659"
+    }
+  }
+}

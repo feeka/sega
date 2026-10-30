@@ -2,10 +2,12 @@
 import argparse
 from collections import defaultdict
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import random
+import shutil
 import statistics
 import sys
 import time
@@ -48,6 +50,52 @@ def completed_result(path):
     if result.get('status')=='ok' and result.get('process',{}).get('status')=='ok' and result['process'].get('returncode')==0:
         return result
     return None
+
+def check_resume_signature(previous,current):
+    """Allow only a relaxed time limit and the explicitly fingerprinted timeout fix."""
+    old=dict(previous);new=dict(current)
+    before=old.pop('timeout',None);after=new.pop('timeout',None)
+    if before!=after and (before is None or (after is not None and after<before)):
+        raise ValueError('Resume refused: the time limit may only be removed or increased')
+    old_sources=old.pop('driver_sources',None);new_sources=new.pop('driver_sources',None)
+    if old!=new:raise ValueError('Resume refused: inputs, binaries or workload settings differ from manifest')
+    if old_sources==new_sources:return []
+    policy_path=Path(__file__).parents[1]/'scripts/representation-resume-compatibility.json'
+    policy=json.loads(policy_path.read_text()) if policy_path.exists() else {'files':{}}
+    old_files={f['path']:f for f in (old_sources or [])};new_files={f['path']:f for f in (new_sources or [])}
+    if old_files.keys()!=new_files.keys():raise ValueError('Resume refused: experiment source files changed')
+    changed=[]
+    for path,item in new_files.items():
+        if old_files[path]==item:continue
+        try:relative=str(Path(path).relative_to(Path(__file__).resolve().parents[1]))
+        except ValueError:raise ValueError('Resume refused: experiment source location changed')
+        rule=policy['files'].get(relative,{})
+        if (old_files[path].get('sha256'),item.get('sha256'))!=(rule.get('before_sha256'),rule.get('after_sha256')):
+            raise ValueError(f'Resume refused: unrecognized code change in {relative}')
+        changed.append(relative)
+    return changed
+
+def record_resume(out,previous,current,changed_sources):
+    """Keep the original manifest and reports before recording a new attempt."""
+    history=out/'attempts'/f'resume-{time.time_ns()}'
+    history.mkdir(parents=True)
+    for name in ('manifest.json','input.json','builds.json','runs.json','verification.json','schedule.json','summary.json','report.html'):
+        if (out/name).is_file():shutil.copy2(out/name,history/name)
+    updated=dict(previous)
+    updated['resume_history']=list(previous.get('resume_history',[]))+[{
+        'requested_unix':time.time(),'previous_manifest':str(history/'manifest.json'),
+        'previous_timeout_seconds':previous['signature']['timeout'],'timeout_seconds':current['timeout'],
+        'compatible_code_changes':changed_sources,
+        'policy':'Completed records retain their original time limits. Failed work is retried; validation is rerun.'}]
+    updated['signature']=current
+    save(out/'manifest.json',updated)
+    return history
+
+def preserve_retry(directory,out,history):
+    if history is not None and directory.exists():
+        destination=history/directory.relative_to(out)
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        directory.rename(destination)
 
 def build(name,tools,input_file,k,directory,threads,memory_gib,timeout):
     directory.mkdir(parents=True,exist_ok=True);tmp=directory/"tmp";tmp.mkdir(exist_ok=True)
@@ -142,11 +190,12 @@ def main(argv=None):
     p.add_argument("--traversal-scope",choices=("forest","sampled","both"),default="sampled",
                    help="sampled (default): search from shared starting points; forest: cover the graph using each tool's own restart order; both: record separately")
     p.add_argument("--memory-gib",type=float,default=2,help="Sampled subprocess-tree RSS stop threshold; not a hard cap")
-    p.add_argument("--timeout",type=float,default=3600,help="Seconds per subprocess")
+    p.add_argument("--timeout",type=float,default=None,help="Optional time limit in seconds per subprocess; default: no time limit")
     p.add_argument("--seed",type=int,default=1729);p.add_argument("--resume",action="store_true")
     args=p.parse_args(argv)
     if args.k<11 or args.k>31 or args.k%2!=1:p.error("Common K must be odd and between 11 and 31")
-    if min(args.threads,args.repeats,args.queries,args.sources)<=0 or args.memory_gib<=0 or args.timeout<=0:p.error("Counts, timeout and memory budget must be positive")
+    if min(args.threads,args.repeats,args.queries,args.sources)<=0 or args.memory_gib<=0:p.error("Counts and memory budget must be positive")
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout<=0):p.error("An explicit timeout must be finite and positive; omit it for no time limit")
     tools=resolve_config(args.tools);check_tools(tools,args.backends)
     if args.mode=="doctor": print("All selected builders and native probes are present.");return 0
     try:import psutil
@@ -172,9 +221,11 @@ def main(argv=None):
                "tools":tools,"binaries":inventory({Path(t[f]) for t in tools.values() for f in ("builder","probe") if f in t}),
                "driver_sources":inventory(source_files)}
     manifest_path=out/"manifest.json"
+    resume_history=None
     if args.resume and manifest_path.exists():
         old=json.loads(manifest_path.read_text())
-        if old["signature"]!=signature:raise ValueError("Resume refused: inputs, binaries, code or settings differ from manifest")
+        changed=check_resume_signature(old["signature"],signature)
+        resume_history=record_resume(out,old,signature,changed)
     else:
         import psutil
         save(manifest_path,{"schema":"sega-representations-v1","signature":signature,"platform":platform.platform(),
@@ -182,6 +233,7 @@ def main(argv=None):
              "physical_memory_bytes":psutil.virtual_memory().total,"thread_environment":{k:os.environ.get(k) for k in ('OMP_NUM_THREADS','OMP_PROC_BIND','OMP_PLACES')},
              "python":sys.version,"started_unix":time.time(),"construction_repeats":1,
              "memory_scope":"native subprocess; Python coordinator/reference excluded; query buffer included in probe RSS"})
+    print('Time limit: '+('none' if args.timeout is None else f'{args.timeout:g} seconds per subprocess'),flush=True)
     normalized=out/"normalized.fa";queries=out/"queries.txt"
     print("Preparing shared k-mer input and query sample...",flush=True)
     if args.resume and args.mode=="run" and (out/"input.json").exists() and normalized.exists() and queries.exists():
@@ -212,6 +264,7 @@ def main(argv=None):
                 for f in result["files"]:
                     if not Path(f["path"]).is_file() or sha256(f["path"])!=f["sha256"]:raise ValueError("Stored graph artifact changed")
             else:
+                preserve_retry(directory,out,resume_history)
                 print(f"Building {name}...",flush=True)
                 result=build(name,tools,normalized,args.k,directory,args.threads,args.memory_gib,args.timeout)
             builds[name]=result
@@ -219,6 +272,7 @@ def main(argv=None):
             failures.append({"stage":"build","backend":name,"error":str(e)});builds[name]={"backend":name,"status":"failed","error":str(e)}
             print(f"FAILED {name}: {e}",flush=True)
         save(out/"builds.json",builds)
+    preserve_retry(out/'verification',out,resume_history)
     verification={"status":"pending","scope":"exhaustive-independent-mini" if words is not None else "sampled-cross-backend-agreement","checks":[],"failures":failures}
     good=[b for b in args.backends if builds.get(b,{}).get("status")=="ok"]
     expected=outgoing=incoming=None
@@ -285,6 +339,7 @@ def main(argv=None):
         try:
             r=completed_result(directory/"result.json") if args.resume else None
             if r is None:
+                preserve_retry(directory,out,resume_history)
                 print(f"Measuring {name}/{op} source={source} repeat {rep+1}/{args.repeats}",flush=True)
                 r=probe(tools,name,builds[name]["artifact"],args.k,op,directory,queries,args.memory_gib,args.timeout,source=source if source!="n/a" else "forest")
             r["repeat"]=rep;runs.append(r)

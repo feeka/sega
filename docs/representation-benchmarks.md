@@ -68,6 +68,8 @@ To run on a real dataset, replace the input filenames below with the actual FAST
 
 `--memory-gib 8` is a **sampled process-tree RSS stop threshold**, not a claim that this dataset fits in 8 GiB. Set it below the RAM available to this job. The controller stops only its own process group on over-budget samples or timeout. Sampling can miss brief peaks and can double-count shared pages; it is not a kernel-enforced memory cap. The Python controller and operating system also need memory. Construction tools receive their own, separately logged buffer settings.
 
+**There is no time limit by default.** Set `--timeout SECONDS` only if you want one. Earlier versions imposed a one-hour limit when the option was omitted; that default has been removed. The memory threshold still applies.
+
 `--repeats` repeats measurements in fresh processes. It does **not** rebuild every graph that many times: construction is measured once per tool. For repeated construction measurements, run into separate output directories. The schedule is reproducibly shuffled. OS caches are uncontrolled, so these are not cold-cache experiments.
 
 `--traversal-scope forest` visits the full graph, selecting roots in each backend's native ID order. This is useful for comparing traversal implementations within a backend, but root order can differ across representations. `sampled` uses the same sampled source k-mers across all backends. `both` records these two workloads separately, including each source's identity; it does not pool their times.
@@ -86,6 +88,17 @@ Useful options:
 # Continue interrupted measurements with identical inputs, code, tools and settings.
 # Repeat the original command and append --resume.
 ```
+
+To recover an experiment that hit the old default timeout, first let its current runner finish. Then update the repository and run:
+
+```sh
+git pull --ff-only
+./representation-tools/env/bin/python scripts/resume_representations.py --out results/SRR14017557-k31
+```
+
+The recovery command reads the actual read paths, tool paths, repeats and other settings from the saved manifest. It imposes no time limit unless you explicitly add `--timeout SECONDS`. It reuses completed graph builds and successful measurements, retries failed work, and reruns validation. The old manifest, reports, failed build files and replaced verification logs are preserved under `attempts/`. No native rebuild or dependency installation is needed for this timeout-policy update.
+
+The original input, binary and graph hash checks still apply. Resume permits a removed or increased time limit, but refuses changes to the workload. For experiments from commit `997c405`, the two Python source changes in this timeout fix are recognized by exact before/after fingerprints in `scripts/representation-resume-compatibility.json`; arbitrary source changes are still refused. The manifest records the policy change, while reused process records retain their original timeout settings.
 
 You can also invoke `python scripts/run_representations.py` directly with `--tools /absolute/path/tools.json`; that Python environment must contain `psutil`. Input is FASTA/FASTQ, optionally gzipped. An existing MEGAHIT graph prefix is **not** a reads filename and is not accepted as `--input` by this common-input construction suite. The existing MEGAHIT-specific experiment runner remains available for measuring already-built SDBG files.
 
@@ -160,7 +173,7 @@ Each fixture includes isolated vertices, tips, four-way branches, cycles, discon
 
 After reducing the suite to these three tools, a fresh K=31 mini experiment rebuilt the graphs and passed 107 recorded correctness checks and 105 measurements, using the previously compiled native executables. All 14 supporting Python tests passed.
 
-Current HTML reports show only the three retained tools. Original result files and provenance from older experiments remain unchanged. Fresh setup and new experiments include only these three tools. Older setup configurations remain usable: entries for tools outside the current benchmark are ignored. Use a new results directory after updating; resume requires the original code and settings.
+Current HTML reports show only the three retained tools. Original result files and provenance from older experiments remain unchanged. Fresh setup and new experiments include only these three tools. Older setup configurations remain usable: entries for tools outside the current benchmark are ignored. Generally use a new results directory after code or workload changes; the fingerprinted timeout-policy recovery described above is an explicit exception.
 
 These are correctness and integration results, not evidence of a runtime or memory advantage at scale. The Linux installation path has not yet been executed on the target server.
 
